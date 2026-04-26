@@ -1,0 +1,11 @@
+# name|config|checkpoint|extra_cfg_options
+# extra_cfg_options can be empty. Multiple options are split by spaces.
+#
+# Example for a custom-trained Mask R-CNN with 1 class:
+# mask_rcnn_r50|configs/mask_rcnn/mask-rcnn_r50_fpn_1x_coco.py|work_dirs/mask-rcnn_r50_fpn_1x_coco/epoch_12.pth|model.roi_head.bbox_head.num_classes=1 model.roi_head.mask_head.num_classes=1
+#
+# Example for a custom-trained Cascade Mask R-CNN with 1 class:
+# cascade_mask_rcnn_r50|configs/cascade_rcnn/cascade-mask-rcnn_r50_fpn_1x_coco.py|work_dirs/cascade-mask-rcnn_r50_fpn_1x_coco/epoch_12.pth|model.roi_head.bbox_head.0.num_classes=1 model.roi_head.bbox_head.1.num_classes=1 model.roi_head.bbox_head.2.num_classes=1 model.roi_head.mask_head.num_classes=1
+#
+# Example for a custom-trained Mask2Former instance model with 1 class:
+# mask2former_r50|configs/mask2former/mask2former_r50_8xb2-lsj-50e_coco.py|work_dirs/mask2former_r50_8xb2-lsj-50e_coco/iter_368750.pth|model.panoptic_head.num_things_classes=1 model.panoptic_head.num_stuff_classes=0 model.panoptic_fusion_head.num_things_classes=1 model.panoptic_fusion_head.num_stuff_classes=0 model.panoptic_head.loss_cls.class_weight=[1.0,0.1]

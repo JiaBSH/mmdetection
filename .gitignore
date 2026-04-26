@@ -121,3 +121,8 @@ work_dirs/
 *.pth
 *.py~
 *.sh~
+
+#custom_0425
+dataset_root/
+work_dirs/
+slurm-*
