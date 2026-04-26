@@ -126,3 +126,5 @@ work_dirs/
 dataset_root/
 work_dirs/
 slurm-*
+temp_bl/
+outputs/

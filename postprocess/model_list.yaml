@@ -1,0 +1,16 @@
+# 多模型后处理评估配置文件示例
+# 用于 compare_models.py --model-cfg 参数
+
+models:
+  - name: MaskRCNN_R50
+    config: work_dirs/custom_maskrcnn_1cls_1024_aug/mask-rcnn_r50_fpn_1x_custom_coco_instance.py
+    checkpoint: work_dirs/custom_maskrcnn_1cls_1024_aug/epoch_50.pth
+
+  - name: SOLOv2_R50
+    config: work_dirs/custom_solov2_1cls_1024_aug/solov2_r50_fpn_1x_custom_coco_instance.py
+    checkpoint: work_dirs/custom_solov2_1cls_1024_aug/epoch_50.pth
+
+  # 新增模型时追加即可，例如:
+  # - name: RTMDet
+  #   config: work_dirs/custom_rtmdet/rtmdet_custom.py
+  #   checkpoint: work_dirs/custom_rtmdet/epoch_50.pth
