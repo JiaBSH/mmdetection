@@ -7,14 +7,34 @@
 #SBATCH --mem=32G
 #SBATCH --time=24:00:00
 
+# ---------------------------------------------------------------------------
+# User configuration
+# ---------------------------------------------------------------------------
+CONDA_PROFILE_SCRIPT="/hpcfs/fpublic/app/miniforge3/conda/etc/profile.d/conda.sh"
+CONDA_ENV_NAME="openmmlab2"
+PROJECT_ROOT="/hpcfs/fhome/sunxc/JiaBSH/mmdetection"
+CONFIG_DIR="configs/custom"
+WORK_DIR_ROOT="work_dirs/custom_all_main"
+TRAIN_TEST_SCRIPT="tools/train_then_test_instance_seg.sh"
+NUM_GPUS=1
+TEST_MAX_EPOCHS="${TEST_MAX_EPOCHS:-20}"
+TEST_TRAIN_BATCH_SIZE="${TEST_TRAIN_BATCH_SIZE:-2}"
+TEST_VAL_BATCH_SIZE="${TEST_VAL_BATCH_SIZE:-2}"
+TEST_TEST_BATCH_SIZE="${TEST_TEST_BATCH_SIZE:-2}"
+REQUIRED_PYTHON_MODULES=(
+    "skimage:scikit-image"
+    "mmpretrain:mmpretrain"
+    "instaboostfast:instaboostfast"
+)
+
 # ❗不要 load python module
 module purge
 
 # ✅ 用你自己的 conda
-source /hpcfs/fpublic/app/miniforge3/conda/etc/profile.d/conda.sh
+source "$CONDA_PROFILE_SCRIPT"
 
 #conda init
-conda activate openmmlab2
+conda activate "$CONDA_ENV_NAME"
 
 set -euo pipefail
 
@@ -287,18 +307,12 @@ python -V
 pip list | grep -E "mmcv|mmdet|mmengine"
 echo "================="
 
-ensure_python_module "skimage" "scikit-image"
-ensure_python_module "mmpretrain" "mmpretrain"
-ensure_python_module "instaboostfast" "instaboostfast"
+for module_spec in "${REQUIRED_PYTHON_MODULES[@]}"; do
+    IFS=':' read -r module_name package_name <<< "$module_spec"
+    ensure_python_module "$module_name" "$package_name"
+done
 
-cd /hpcfs/fhome/sunxc/JiaBSH/mmdetection
-
-CONFIG_DIR="configs/custom"
-WORK_DIR_ROOT="work_dirs/custom_all_test"
-TEST_MAX_EPOCHS="${TEST_MAX_EPOCHS:-1}"
-TEST_TRAIN_BATCH_SIZE="${TEST_TRAIN_BATCH_SIZE:-2}"
-TEST_VAL_BATCH_SIZE="${TEST_VAL_BATCH_SIZE:-2}"
-TEST_TEST_BATCH_SIZE="${TEST_TEST_BATCH_SIZE:-2}"
+cd "$PROJECT_ROOT"
 
 COMMON_CFG_OPTIONS=(
     --cfg-options
@@ -341,9 +355,9 @@ for config in "${configs[@]}"; do
     : > "$log_file"
 
     echo "===== RUNNING: $config_name ====="
-    if ! bash tools/train_then_test_instance_seg.sh \
+    if ! bash "$TRAIN_TEST_SCRIPT" \
         "$config" \
-        1 \
+        "$NUM_GPUS" \
         "$work_dir" \
         "${COMMON_CFG_OPTIONS[@]}" 2>&1 | tee -a "$log_file"; then
         echo "FAILED: $config_name"

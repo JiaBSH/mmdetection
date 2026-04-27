@@ -1,16 +1,52 @@
-# 多模型后处理评估配置文件示例
-# 用于 compare_models.py --model-cfg 参数
-
 models:
-  - name: MaskRCNN_R50
-    config: work_dirs/custom_maskrcnn_1cls_1024_aug/mask-rcnn_r50_fpn_1x_custom_coco_instance.py
-    checkpoint: work_dirs/custom_maskrcnn_1cls_1024_aug/epoch_50.pth
-
-  - name: SOLOv2_R50
-    config: work_dirs/custom_solov2_1cls_1024_aug/solov2_r50_fpn_1x_custom_coco_instance.py
-    checkpoint: work_dirs/custom_solov2_1cls_1024_aug/epoch_50.pth
-
-  # 新增模型时追加即可，例如:
-  # - name: RTMDet
-  #   config: work_dirs/custom_rtmdet/rtmdet_custom.py
-  #   checkpoint: work_dirs/custom_rtmdet/epoch_50.pth
+  - name: boxinst_r50_fpn_custom_coco_instance
+    config: work_dirs/custom_all_test/boxinst_r50_fpn_custom_coco_instance/boxinst_r50_fpn_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/boxinst_r50_fpn_custom_coco_instance/epoch_1.pth
+  - name: cascade-mask-rcnn_r50_fpn_1x_custom_coco_instance
+    config: work_dirs/custom_all_test/cascade-mask-rcnn_r50_fpn_1x_custom_coco_instance/cascade-mask-rcnn_r50_fpn_1x_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/cascade-mask-rcnn_r50_fpn_1x_custom_coco_instance/epoch_1.pth
+  - name: condinst_r50_fpn_custom_coco_instance
+    config: work_dirs/custom_all_test/condinst_r50_fpn_custom_coco_instance/condinst_r50_fpn_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/condinst_r50_fpn_custom_coco_instance/epoch_1.pth
+  - name: detectors_htc-r50_custom_coco_instance
+    config: work_dirs/custom_all_test/detectors_htc-r50_custom_coco_instance/detectors_htc-r50_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/detectors_htc-r50_custom_coco_instance/epoch_1.pth
+  - name: htc-without-semantic_r50_fpn_1x_custom_coco_instance
+    config: work_dirs/custom_all_test/htc-without-semantic_r50_fpn_1x_custom_coco_instance/htc-without-semantic_r50_fpn_1x_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/htc-without-semantic_r50_fpn_1x_custom_coco_instance/epoch_1.pth
+  - name: mask2former_r50_custom_coco_instance
+    config: work_dirs/custom_all_test/mask2former_r50_custom_coco_instance/mask2former_r50_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/mask2former_r50_custom_coco_instance/epoch_1.pth
+  - name: mask-rcnn_convnext-v2-b_custom_coco_instance
+    config: work_dirs/custom_all_test/mask-rcnn_convnext-v2-b_custom_coco_instance/mask-rcnn_convnext-v2-b_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/mask-rcnn_convnext-v2-b_custom_coco_instance/epoch_1.pth
+  - name: mask-rcnn_r50_fpn_1x_custom_coco_instance
+    config: work_dirs/custom_all_test/mask-rcnn_r50_fpn_1x_custom_coco_instance/mask-rcnn_r50_fpn_1x_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/mask-rcnn_r50_fpn_1x_custom_coco_instance/epoch_1.pth
+  - name: mask-rcnn_r50_fpn_instaboost_custom_coco_instance
+    config: work_dirs/custom_all_test/mask-rcnn_r50_fpn_instaboost_custom_coco_instance/mask-rcnn_r50_fpn_instaboost_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/mask-rcnn_r50_fpn_instaboost_custom_coco_instance/epoch_1.pth
+  - name: ms-rcnn_r50-caffe_fpn_1x_custom_coco_instance
+    config: work_dirs/custom_all_test/ms-rcnn_r50-caffe_fpn_1x_custom_coco_instance/ms-rcnn_r50-caffe_fpn_1x_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/ms-rcnn_r50-caffe_fpn_1x_custom_coco_instance/epoch_1.pth
+  - name: point-rend_r50-caffe_fpn_custom_coco_instance
+    config: work_dirs/custom_all_test/point-rend_r50-caffe_fpn_custom_coco_instance/point-rend_r50-caffe_fpn_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/point-rend_r50-caffe_fpn_custom_coco_instance/epoch_1.pth
+  - name: queryinst_r50_fpn_1x_custom_coco_instance
+    config: work_dirs/custom_all_test/queryinst_r50_fpn_1x_custom_coco_instance/queryinst_r50_fpn_1x_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/queryinst_r50_fpn_1x_custom_coco_instance/epoch_1.pth
+  - name: rtmdet-ins_tiny_custom_coco_instance
+    config: work_dirs/custom_all_test/rtmdet-ins_tiny_custom_coco_instance/rtmdet-ins_tiny_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/rtmdet-ins_tiny_custom_coco_instance/epoch_1.pth
+  - name: solo_r50_fpn_1x_custom_coco_instance
+    config: work_dirs/custom_all_test/solo_r50_fpn_1x_custom_coco_instance/solo_r50_fpn_1x_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/solo_r50_fpn_1x_custom_coco_instance/epoch_1.pth
+  - name: solov2_r50_fpn_1x_custom_coco_instance
+    config: work_dirs/custom_all_test/solov2_r50_fpn_1x_custom_coco_instance/solov2_r50_fpn_1x_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/solov2_r50_fpn_1x_custom_coco_instance/epoch_1.pth
+  - name: sparseinst_r50_custom_coco_instance
+    config: work_dirs/custom_all_test/sparseinst_r50_custom_coco_instance/sparseinst_r50_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/sparseinst_r50_custom_coco_instance/epoch_1.pth
+  - name: yolact_r50_custom_coco_instance
+    config: work_dirs/custom_all_test/yolact_r50_custom_coco_instance/yolact_r50_custom_coco_instance.py
+    checkpoint: work_dirs/custom_all_test/yolact_r50_custom_coco_instance/epoch_1.pth

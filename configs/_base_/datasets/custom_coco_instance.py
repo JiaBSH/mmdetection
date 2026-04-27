@@ -3,7 +3,7 @@
 dataset_type = 'CocoDataset'
 # Preprocessed dataset (images already resized to <=1024px longest side).
 # Run tools/preprocess_resize.py once to generate this directory.
-data_root = 'dataset_root/dataset_mini/'
+data_root = 'dataset_root/dataset_1024_aug/'
 
 # Replace with your category names in annotation order.
 metainfo = dict(classes=('畴区', ))
