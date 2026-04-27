@@ -14,7 +14,7 @@ model = dict(bbox_head=dict(num_classes=num_classes))
 # Dataset  (override the COCO defaults from the base config)
 # ---------------------------------------------------------------------------
 dataset_type = 'CocoDataset'
-data_root = 'dataset_root/dataset_1024_aug/'
+data_root = 'dataset_root/dataset_mini/'
 metainfo = dict(classes=('畴区', ))
 backend_args = None
 
@@ -41,8 +41,8 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=8,
-    num_workers=8,
+    batch_size=2,
+    num_workers=2,
     persistent_workers=True,
     pin_memory=True,
     sampler=dict(type='DefaultSampler', shuffle=True),
@@ -58,8 +58,8 @@ train_dataloader = dict(
         backend_args=backend_args))
 
 val_dataloader = dict(
-    batch_size=8,
-    num_workers=4,
+    batch_size=2,
+    num_workers=2,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False),
@@ -74,8 +74,8 @@ val_dataloader = dict(
         backend_args=backend_args))
 
 test_dataloader = dict(
-    batch_size=8,
-    num_workers=4,
+    batch_size=2,
+    num_workers=2,
     persistent_workers=True,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False),
@@ -122,7 +122,8 @@ param_scheduler = [
         gamma=0.1)
 ]
 
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=50, val_interval=1)
+train_cfg = dict(
+    _delete_=True, type='EpochBasedTrainLoop', max_epochs=50, val_interval=1)
 val_cfg = dict(type='ValLoop')
 test_cfg = dict(type='TestLoop')
 

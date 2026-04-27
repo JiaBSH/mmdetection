@@ -37,30 +37,34 @@ def parse_scalars(path):
             if not line:
                 continue
             d = json.loads(line)
-            if "epoch" in d:
-                train_records.append(d)
-            elif any(k.startswith("coco/") for k in d):
+            if any(k.startswith("coco/") for k in d):
                 val_records.append(d)
+            elif "epoch" in d or "iter" in d:
+                train_records.append(d)
     return train_records, val_records
 
 
-def aggregate_train_by_epoch(records):
-    """Average each loss metric per epoch."""
+def aggregate_train_records(records):
+    """Average each loss metric per epoch or iteration."""
     loss_keys = [
         k for k in records[0] if k.startswith("loss") or k == "lr"
     ] if records else []
+    index_key = "epoch" if any("epoch" in r for r in records) else "iter"
     buckets = defaultdict(lambda: defaultdict(list))
     for r in records:
-        ep = r["epoch"]
+        if index_key not in r:
+            continue
+        index = r[index_key]
         for k in loss_keys:
             if k in r:
-                buckets[ep][k].append(r[k])
-    epochs = sorted(buckets)
+                buckets[index][k].append(r[k])
+    indices = sorted(buckets)
     result = {k: [] for k in loss_keys}
-    result["epoch"] = epochs
-    for ep in epochs:
+    result[index_key] = indices
+    result["index_label"] = index_key.title()
+    for index in indices:
         for k in loss_keys:
-            vals = buckets[ep][k]
+            vals = buckets[index][k]
             result[k].append(sum(vals) / len(vals) if vals else float("nan"))
     return result
 
@@ -80,17 +84,24 @@ def aggregate_val_by_epoch(records):
 
 
 def plot_train_losses(train_agg, out_dir):
-    epochs = train_agg["epoch"]
-    loss_keys = [k for k in train_agg if k not in ("epoch", "lr")]
+    if not train_agg:
+        return
+    index_key = "epoch" if "epoch" in train_agg else "iter"
+    epochs = train_agg.get(index_key, [])
+    if not epochs:
+        return
+    loss_keys = [
+        k for k in train_agg if k not in ("epoch", "iter", "lr", "index_label")
+    ]
     if not loss_keys:
         return
 
     fig, ax = plt.subplots(figsize=(10, 5))
     for k in loss_keys:
         ax.plot(epochs, train_agg[k], label=k)
-    ax.set_xlabel("Epoch")
+    ax.set_xlabel(train_agg.get("index_label", index_key.title()))
     ax.set_ylabel("Loss")
-    ax.set_title("Training Losses per Epoch")
+    ax.set_title(f"Training Losses per {train_agg.get('index_label', index_key.title())}")
     ax.legend(fontsize=8)
     ax.grid(True, alpha=0.3)
     plt.tight_layout()
@@ -103,10 +114,11 @@ def plot_train_losses(train_agg, out_dir):
 def plot_lr(train_agg, out_dir):
     if "lr" not in train_agg:
         return
-    epochs = train_agg["epoch"]
+    index_key = "epoch" if "epoch" in train_agg else "iter"
+    epochs = train_agg[index_key]
     fig, ax = plt.subplots(figsize=(8, 4))
     ax.plot(epochs, train_agg["lr"])
-    ax.set_xlabel("Epoch")
+    ax.set_xlabel(train_agg.get("index_label", index_key.title()))
     ax.set_ylabel("Learning Rate")
     ax.set_title("Learning Rate Schedule")
     ax.grid(True, alpha=0.3)
@@ -156,14 +168,23 @@ def plot_combined(train_agg, val_agg, out_dir):
     if not train_agg or not val_agg:
         return
     fig, ax1 = plt.subplots(figsize=(10, 5))
+    index_key = "epoch" if "epoch" in train_agg else "iter"
+    train_index = train_agg.get(index_key, [])
+    if not train_index:
+        return
+    index_label = train_agg.get("index_label", index_key.title())
 
     color_loss = "tab:blue"
-    ax1.set_xlabel("Epoch")
+    ax1.set_xlabel(index_label)
     ax1.set_ylabel("Loss", color=color_loss)
-    if "loss" in train_agg:
+    loss_key = "loss" if "loss" in train_agg else None
+    if loss_key is None:
+        loss_candidates = [k for k in train_agg if k.startswith("loss")]
+        loss_key = loss_candidates[0] if loss_candidates else None
+    if loss_key is not None:
         ax1.plot(
-            train_agg["epoch"], train_agg["loss"],
-            color=color_loss, label="loss (train)"
+            train_index, train_agg[loss_key],
+            color=color_loss, label=f"{loss_key} (train)"
         )
     ax1.tick_params(axis="y", labelcolor=color_loss)
 
@@ -214,7 +235,7 @@ def main():
     train_records, val_records = parse_scalars(scalars_path)
     print(f"  Train records: {len(train_records)}, Val records: {len(val_records)}")
 
-    train_agg = aggregate_train_by_epoch(train_records) if train_records else {}
+    train_agg = aggregate_train_records(train_records) if train_records else {}
     val_agg = aggregate_val_by_epoch(val_records) if val_records else {}
 
     plot_train_losses(train_agg, out_dir)

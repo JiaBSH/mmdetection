@@ -48,7 +48,7 @@ model = dict(
 # Dataset  (replace the COCO defaults from the base config)
 # ---------------------------------------------------------------------------
 dataset_type = 'CocoDataset'
-data_root = 'dataset_root/dataset_1024_aug/'
+data_root = 'dataset_root/dataset_mini/'
 metainfo = dict(classes=('畴区', ))
 backend_args = None
 
@@ -83,7 +83,7 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=4,
+    batch_size=1,
     num_workers=4,
     persistent_workers=True,
     pin_memory=True,
@@ -99,7 +99,7 @@ train_dataloader = dict(
         backend_args=backend_args))
 
 val_dataloader = dict(
-    batch_size=4,
+    batch_size=1,
     num_workers=4,
     persistent_workers=True,
     drop_last=False,
@@ -115,7 +115,7 @@ val_dataloader = dict(
         backend_args=backend_args))
 
 test_dataloader = dict(
-    batch_size=4,
+    batch_size=1,
     num_workers=4,
     persistent_workers=True,
     drop_last=False,
@@ -148,5 +148,11 @@ test_evaluator = dict(
 
 # Keep 50 epochs but save every epoch and reduce max_keep_ckpts.
 default_hooks = dict(
-    checkpoint=dict(interval=1, max_keep_ckpts=1, save_optimizer=False))
-train_cfg = dict(type='EpochBasedTrainLoop', max_epochs=50, val_interval=1)
+    checkpoint=dict(
+        type='CheckpointHook',
+        interval=1,
+        by_epoch=True,
+        max_keep_ckpts=1,
+        save_optimizer=False))
+train_cfg = dict(
+    _delete_=True, type='EpochBasedTrainLoop', max_epochs=50, val_interval=1)

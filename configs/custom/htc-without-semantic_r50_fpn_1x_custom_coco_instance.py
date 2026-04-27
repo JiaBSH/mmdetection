@@ -104,7 +104,7 @@ model = dict(
 # Dataset
 # ---------------------------------------------------------------------------
 dataset_type = 'CocoDataset'
-data_root = 'dataset_root/dataset_1024_aug/'
+data_root = 'dataset_root/dataset_mini/'
 metainfo = dict(classes=('畴区', ))
 backend_args = None
 
@@ -127,7 +127,7 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=8,
+    batch_size=2,
     num_workers=8,
     persistent_workers=True,
     pin_memory=True,
@@ -144,7 +144,7 @@ train_dataloader = dict(
         backend_args=backend_args))
 
 val_dataloader = dict(
-    batch_size=8,
+    batch_size=1,
     num_workers=4,
     persistent_workers=True,
     drop_last=False,
@@ -160,7 +160,7 @@ val_dataloader = dict(
         backend_args=backend_args))
 
 test_dataloader = dict(
-    batch_size=8,
+    batch_size=1,
     num_workers=4,
     persistent_workers=True,
     drop_last=False,

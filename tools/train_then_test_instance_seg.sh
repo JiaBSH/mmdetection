@@ -115,19 +115,25 @@ if [[ -d "$VIS_INPUTS" ]]; then
   # Pass BEST_CKPT directly as the model argument so image_demo.py reads
   # the config stored inside the checkpoint (which includes all cfg-options
   # overrides such as num_classes applied during training).
-  python demo/image_demo.py "$VIS_INPUTS" "$BEST_CKPT" \
-    --device "$VIS_DEVICE" \
-    --pred-score-thr "$VIS_SCORE_THR" \
-    --out-dir "$VIS_OUT_DIR" \
-    --batch-size 4
-  echo "Visualization results saved to: $VIS_OUT_DIR"
+  if python demo/image_demo.py "$VIS_INPUTS" "$BEST_CKPT" \
+      --device "$VIS_DEVICE" \
+      --pred-score-thr "$VIS_SCORE_THR" \
+      --out-dir "$VIS_OUT_DIR" \
+      --batch-size 4; then
+    echo "Visualization results saved to: $VIS_OUT_DIR"
+  else
+    echo "Skip visualization: demo/image_demo.py failed for $CONFIG"
+  fi
 else
   echo "Skip visualization: test image dir not found: $VIS_INPUTS"
   echo "You can set VIS_INPUTS to your test image directory and rerun."
 fi
 
 echo "============= PLOT METRICS ============="
-python tools/plot_metrics.py "$WORK_DIR" --out-dir "$WORK_DIR/metric_plots"
-echo "Metric plots saved to: $WORK_DIR/metric_plots"
+if python tools/plot_metrics.py "$WORK_DIR" --out-dir "$WORK_DIR/metric_plots"; then
+  echo "Metric plots saved to: $WORK_DIR/metric_plots"
+else
+  echo "Skip metric plotting: tools/plot_metrics.py failed for $CONFIG"
+fi
 
 echo "Done. Check logs under: $WORK_DIR and $WORK_DIR/test"

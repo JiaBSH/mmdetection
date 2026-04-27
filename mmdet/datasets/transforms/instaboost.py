@@ -137,8 +137,11 @@ class InstaBoost(BaseTransform):
             except ImportError:
                 raise ImportError('Please run "pip install instaboostfast" '
                                   'to install instaboostfast first.')
-            anns, img = instaboost.get_new_data(
-                anns, img.astype(np.uint8), self.cfg, background=None)
+            try:
+                anns, img = instaboost.get_new_data(
+                    anns, img.astype(np.uint8), self.cfg, background=None)
+            except ValueError:
+                pass
 
         results = self._parse_anns(results, anns, ignore_anns,
                                    img.astype(ori_type))

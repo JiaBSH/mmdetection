@@ -8,6 +8,11 @@ _base_ = './mask-rcnn_r50_fpn_1x_custom_coco_instance.py'
 train_pipeline = [
     dict(type='LoadImageFromFile', backend_args=None),
     dict(
+        type='LoadAnnotations',
+        with_bbox=True,
+        with_mask=True,
+        poly2mask=False),
+    dict(
         type='InstaBoost',
         action_candidate=('normal', 'horizontal', 'skip'),
         action_prob=(1, 0, 0),
@@ -18,7 +23,6 @@ train_pipeline = [
         color_prob=0.5,
         hflag=False,
         aug_ratio=0.5),
-    dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
     dict(type='Resize', scale=(1024, 1024), keep_ratio=True),
     dict(type='RandomFlip', prob=0.5),
     dict(type='PackDetInputs')

@@ -20,7 +20,7 @@ model = dict(
 # Dataset
 # ---------------------------------------------------------------------------
 dataset_type = 'CocoDataset'
-data_root = 'dataset_root/dataset_1024_aug/'
+data_root = 'dataset_root/dataset_mini/'
 metainfo = dict(classes=('畴区', ))
 backend_args = None
 
