@@ -10,6 +10,32 @@ from mmengine.runner import Runner
 from mmdet.utils import setup_cache_size_limit_of_dynamo
 
 
+def add_early_stopping_hook(cfg, args):
+    if args.early_stop_monitor is None:
+        return
+
+    early_stop_hook = dict(
+        type='EarlyStoppingHook',
+        monitor=args.early_stop_monitor,
+        rule=args.early_stop_rule,
+        min_delta=args.early_stop_min_delta,
+        strict=args.early_stop_strict,
+        check_finite=not args.early_stop_no_check_finite,
+        patience=args.early_stop_patience)
+    if args.early_stop_stopping_threshold is not None:
+        early_stop_hook['stopping_threshold'] = \
+            args.early_stop_stopping_threshold
+
+    custom_hooks = []
+    for hook in cfg.get('custom_hooks', []):
+        if isinstance(hook, dict) and hook.get('type') == 'EarlyStoppingHook':
+            continue
+        custom_hooks.append(hook)
+
+    custom_hooks.append(early_stop_hook)
+    cfg.custom_hooks = custom_hooks
+
+
 def parse_args():
     parser = argparse.ArgumentParser(description='Train a detector')
     parser.add_argument('config', help='train config file path')
@@ -42,6 +68,39 @@ def parse_args():
         'Note that the quotation marks are necessary and that no white space '
         'is allowed.')
     parser.add_argument(
+        '--early-stop-monitor',
+        type=str,
+        help='validation metric used by EarlyStoppingHook, '
+        'for example coco/segm_mAP')
+    parser.add_argument(
+        '--early-stop-patience',
+        type=int,
+        default=5,
+        help='number of validation intervals with no improvement before '
+        'stopping training')
+    parser.add_argument(
+        '--early-stop-min-delta',
+        type=float,
+        default=0.0,
+        help='minimum metric improvement required to reset patience')
+    parser.add_argument(
+        '--early-stop-rule',
+        choices=['greater', 'less'],
+        default='greater',
+        help='whether the monitored metric should increase or decrease')
+    parser.add_argument(
+        '--early-stop-stopping-threshold',
+        type=float,
+        help='optional target threshold that stops training once reached')
+    parser.add_argument(
+        '--early-stop-strict',
+        action='store_true',
+        help='raise an error if the monitored metric is missing')
+    parser.add_argument(
+        '--early-stop-no-check-finite',
+        action='store_true',
+        help='disable NaN/Inf checks in EarlyStoppingHook')
+    parser.add_argument(
         '--launcher',
         choices=['none', 'pytorch', 'slurm', 'mpi'],
         default='none',
@@ -69,6 +128,7 @@ def main():
     cfg.launcher = args.launcher
     if args.cfg_options is not None:
         cfg.merge_from_dict(args.cfg_options)
+    add_early_stopping_hook(cfg, args)
 
     # work_dir is determined in this priority: CLI > segment in file > filename
     if args.work_dir is not None:

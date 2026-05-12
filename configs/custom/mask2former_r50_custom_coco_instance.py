@@ -156,3 +156,4 @@ default_hooks = dict(
         save_optimizer=False))
 train_cfg = dict(
     _delete_=True, type='EpochBasedTrainLoop', max_epochs=50, val_interval=1)
+log_processor = dict(by_epoch=True)

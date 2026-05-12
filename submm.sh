@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --job-name=mm
+#SBATCH --job-name=mm_batch8
 #SBATCH -p qgpu_4090
 #SBATCH -N 1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
-#SBATCH --time=24:00:00
+#SBATCH --time=48:00:00
 
 # ---------------------------------------------------------------------------
 # User configuration
@@ -14,13 +14,20 @@ CONDA_PROFILE_SCRIPT="/hpcfs/fpublic/app/miniforge3/conda/etc/profile.d/conda.sh
 CONDA_ENV_NAME="openmmlab2"
 PROJECT_ROOT="/hpcfs/fhome/sunxc/JiaBSH/mmdetection"
 CONFIG_DIR="configs/custom"
-WORK_DIR_ROOT="work_dirs/custom_all_main"
+WORK_DIR_ROOT="work_dirs/custom_all_main_es"
 TRAIN_TEST_SCRIPT="tools/train_then_test_instance_seg.sh"
+DATA_ROOT="${DATA_ROOT:-dataset_root/dataset_1024_aug/}"
 NUM_GPUS=1
 TEST_MAX_EPOCHS="${TEST_MAX_EPOCHS:-20}"
 TEST_TRAIN_BATCH_SIZE="${TEST_TRAIN_BATCH_SIZE:-2}"
 TEST_VAL_BATCH_SIZE="${TEST_VAL_BATCH_SIZE:-2}"
 TEST_TEST_BATCH_SIZE="${TEST_TEST_BATCH_SIZE:-2}"
+ENABLE_EARLY_STOPPING="${ENABLE_EARLY_STOPPING:-1}"
+EARLY_STOP_MONITOR="${EARLY_STOP_MONITOR:-coco/segm_mAP}"
+EARLY_STOP_PATIENCE="${EARLY_STOP_PATIENCE:-5}"
+EARLY_STOP_MIN_DELTA="${EARLY_STOP_MIN_DELTA:-0.0}"
+EARLY_STOP_RULE="${EARLY_STOP_RULE:-greater}"
+EARLY_STOP_THRESHOLD="${EARLY_STOP_THRESHOLD:-}"
 REQUIRED_PYTHON_MODULES=(
     "skimage:scikit-image"
     "mmpretrain:mmpretrain"
@@ -111,7 +118,7 @@ try:
     if log_file.exists():
         with open(log_file) as f:
             for line in f:
-                if 'Epoch(test)' not in line and 'Iter(test)' not in line: continue
+                if 'Epoch(test)' not in line and 'Iter(test)' not in line:
                     continue
                 tm = time_pat.search(line)
                 if tm:
@@ -168,6 +175,13 @@ print_summary_table() {
             printf '%-45s | %-10s | %-12s | %-10s | %s\n' \
                 "$model" "$run_status" "$weights_source" "$load_ok" "$reason"
     done < "$summary_file"
+}
+
+is_model_completed() {
+    local work_dir="$1"
+
+    [[ $(find "$work_dir" -maxdepth 1 \( -name 'best_*.pth' -o -name 'latest.pth' -o -name 'epoch_*.pth' -o -name 'iter_*.pth' \) | head -n 1) \
+        && -d "$work_dir/test" && -d "$work_dir/metric_plots" ]]
 }
 
 extract_failure_reason() {
@@ -316,12 +330,31 @@ cd "$PROJECT_ROOT"
 
 COMMON_CFG_OPTIONS=(
     --cfg-options
+    "data_root=${DATA_ROOT}"
+    "train_dataloader.dataset.data_root=${DATA_ROOT}"
+    "val_dataloader.dataset.data_root=${DATA_ROOT}"
+    "test_dataloader.dataset.data_root=${DATA_ROOT}"
+    "val_evaluator.ann_file=${DATA_ROOT}annotations/instances_val.json"
+    "test_evaluator.ann_file=${DATA_ROOT}annotations/instances_test.json"
     "train_cfg.max_epochs=${TEST_MAX_EPOCHS}"
     "default_hooks.checkpoint.interval=1"
     "train_dataloader.batch_size=${TEST_TRAIN_BATCH_SIZE}"
     "val_dataloader.batch_size=${TEST_VAL_BATCH_SIZE}"
     "test_dataloader.batch_size=${TEST_TEST_BATCH_SIZE}"
 )
+
+EARLY_STOP_ARGS=()
+if [[ "$ENABLE_EARLY_STOPPING" == "1" ]]; then
+    EARLY_STOP_ARGS=(
+        --early-stop-monitor "$EARLY_STOP_MONITOR"
+        --early-stop-patience "$EARLY_STOP_PATIENCE"
+        --early-stop-min-delta "$EARLY_STOP_MIN_DELTA"
+        --early-stop-rule "$EARLY_STOP_RULE"
+    )
+    if [[ -n "$EARLY_STOP_THRESHOLD" ]]; then
+        EARLY_STOP_ARGS+=(--early-stop-stopping-threshold "$EARLY_STOP_THRESHOLD")
+    fi
+fi
 
 shopt -s nullglob
 configs=("$CONFIG_DIR"/*.py)
@@ -351,6 +384,18 @@ for config in "${configs[@]}"; do
     mkdir -p "$work_dir"
     IFS=$'\t' read -r weights_source weights_detail < <(get_weight_info "$config")
 
+    if is_model_completed "$work_dir"; then
+        echo "===== SKIPPING COMPLETED: $config_name ====="
+        load_ok=$(detect_weight_load_status "$log_file" "$weights_source")
+        reason="already completed"
+        printf '%s\t%s\t%s\t%s\t%s\n' \
+            "$config_name" "$run_status" "$weights_source" "$load_ok" "$reason" >> "$SUMMARY_FILE"
+        if ! collect_model_stats "$config" "$work_dir" >> "$STATS_FILE" 2>> "$log_file"; then
+            echo "[warn] Failed to collect model stats for $config_name" | tee -a "$log_file"
+        fi
+        continue
+    fi
+
 
     : > "$log_file"
 
@@ -359,7 +404,8 @@ for config in "${configs[@]}"; do
         "$config" \
         "$NUM_GPUS" \
         "$work_dir" \
-        "${COMMON_CFG_OPTIONS[@]}" 2>&1 | tee -a "$log_file"; then
+        "${COMMON_CFG_OPTIONS[@]}" \
+        "${EARLY_STOP_ARGS[@]}" 2>&1 | tee -a "$log_file"; then
         echo "FAILED: $config_name"
         run_status="FAILED"
         failed_configs+=("$config_name")
@@ -382,7 +428,9 @@ for config in "${configs[@]}"; do
         "$config_name" "$run_status" "$weights_source" "$load_ok" "$reason" >> "$SUMMARY_FILE"
 
     if [[ "$run_status" == "OK" ]]; then
-        collect_model_stats "$config" "$work_dir" >> "$STATS_FILE" 2>> "$log_file"
+        if ! collect_model_stats "$config" "$work_dir" >> "$STATS_FILE" 2>> "$log_file"; then
+            echo "[warn] Failed to collect model stats for $config_name" | tee -a "$log_file"
+        fi
     fi
 done
 

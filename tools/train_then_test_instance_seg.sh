@@ -15,8 +15,9 @@ if [[ $# -lt 3 ]]; then
     test_dataloader.dataset.data_prefix.img=images/val/ \\
     val_evaluator.ann_file=/data/my_coco/annotations/instances_val.json \\
     test_evaluator.ann_file=/data/my_coco/annotations/instances_val.json \\
+    --early-stop-monitor coco/segm_mAP --early-stop-patience 5 \\
     model.roi_head.bbox_head.num_classes=1 model.roi_head.mask_head.num_classes=1"
-  echo "Note: extra args should usually start with --cfg-options"
+  echo "Note: shared config overrides should usually start with --cfg-options"
   exit 1
 fi
 
@@ -27,21 +28,49 @@ shift 3
 
 # Ignore accidental standalone '.' argument from shell completion/history.
 RAW_EXTRA_ARGS=("$@")
-EXTRA_ARGS=()
+SHARED_ARGS=()
+TRAIN_ONLY_ARGS=()
 for arg in "${RAW_EXTRA_ARGS[@]}"; do
   if [[ "$arg" == "." ]]; then
     continue
   fi
-  EXTRA_ARGS+=("$arg")
+done
+
+idx=0
+while [[ $idx -lt ${#RAW_EXTRA_ARGS[@]} ]]; do
+  arg="${RAW_EXTRA_ARGS[$idx]}"
+  if [[ "$arg" == "." ]]; then
+    ((idx += 1))
+    continue
+  fi
+
+  case "$arg" in
+    --early-stop-monitor|--early-stop-patience|--early-stop-min-delta|--early-stop-rule|--early-stop-stopping-threshold)
+      if [[ $((idx + 1)) -ge ${#RAW_EXTRA_ARGS[@]} ]]; then
+        echo "Missing value for $arg"
+        exit 1
+      fi
+      TRAIN_ONLY_ARGS+=("$arg" "${RAW_EXTRA_ARGS[$((idx + 1))]}")
+      ((idx += 2))
+      ;;
+    --early-stop-strict|--early-stop-no-check-finite)
+      TRAIN_ONLY_ARGS+=("$arg")
+      ((idx += 1))
+      ;;
+    *)
+      SHARED_ARGS+=("$arg")
+      ((idx += 1))
+      ;;
+  esac
 done
 
 mkdir -p "$WORK_DIR"
 
 echo "================ TRAIN ================="
 if [[ "$GPUS" -gt 1 ]]; then
-  bash tools/dist_train.sh "$CONFIG" "$GPUS" --work-dir "$WORK_DIR" "${EXTRA_ARGS[@]}"
+  bash tools/dist_train.sh "$CONFIG" "$GPUS" --work-dir "$WORK_DIR" "${SHARED_ARGS[@]}" "${TRAIN_ONLY_ARGS[@]}"
 else
-  python tools/train.py "$CONFIG" --work-dir "$WORK_DIR" "${EXTRA_ARGS[@]}"
+  python tools/train.py "$CONFIG" --work-dir "$WORK_DIR" "${SHARED_ARGS[@]}" "${TRAIN_ONLY_ARGS[@]}"
 fi
 
 echo "========== FIND BEST CHECKPOINT =========="
@@ -66,16 +95,16 @@ echo "Use checkpoint: $BEST_CKPT"
 
 echo "================ TEST ================="
 if [[ "$GPUS" -gt 1 ]]; then
-  bash tools/dist_test.sh "$CONFIG" "$BEST_CKPT" "$GPUS" --work-dir "$WORK_DIR/test" "${EXTRA_ARGS[@]}"
+  bash tools/dist_test.sh "$CONFIG" "$BEST_CKPT" "$GPUS" --work-dir "$WORK_DIR/test" "${SHARED_ARGS[@]}"
 else
-  python tools/test.py "$CONFIG" "$BEST_CKPT" --work-dir "$WORK_DIR/test" "${EXTRA_ARGS[@]}"
+  python tools/test.py "$CONFIG" "$BEST_CKPT" --work-dir "$WORK_DIR/test" "${SHARED_ARGS[@]}"
 fi
 
 echo "============= VISUALIZE TEST ============="
 # Auto-derive test image directory from --cfg-options if provided.
 _DATA_ROOT=""
 _TEST_IMG_PREFIX=""
-for _arg in "${EXTRA_ARGS[@]}"; do
+for _arg in "${SHARED_ARGS[@]}"; do
   case "$_arg" in
     data_root=*)                               _DATA_ROOT="${_arg#data_root=}" ;;
     test_dataloader.dataset.data_prefix.img=*) _TEST_IMG_PREFIX="${_arg#test_dataloader.dataset.data_prefix.img=}" ;;

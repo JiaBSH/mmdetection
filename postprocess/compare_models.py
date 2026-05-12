@@ -30,6 +30,7 @@ import argparse
 import csv
 import json
 import os
+import re
 import sys
 import traceback
 from pathlib import Path
@@ -65,14 +66,67 @@ def _parse_model_spec(spec: str) -> tuple[str, str, str]:
     return name, config, ckpt
 
 
-def _load_model_list_yaml(yaml_path: str) -> list[tuple[str, str, str]]:
+def _resolve_model_path(path: str, model_root: str | None) -> str:
+    """将相对模型路径解析到统一根目录下。"""
+    if not model_root or os.path.isabs(path):
+        return path
+    return os.path.join(model_root, path)
+
+
+def _resolve_checkpoint_path(
+    path: str, model_root: str | None, checkpoint_epoch: int | None
+) -> str:
+    """补全 checkpoint 路径，并支持通过占位符统一设置 epoch。"""
+    if checkpoint_epoch is not None:
+        path = path.replace("{epoch}", str(checkpoint_epoch))
+
+    resolved_path = _resolve_model_path(path, model_root)
+    if "{epoch}" not in resolved_path:
+        return resolved_path
+
+    checkpoint_dir = os.path.dirname(resolved_path)
+    last_checkpoint_path = os.path.join(checkpoint_dir, "last_checkpoint")
+    if os.path.isfile(last_checkpoint_path):
+        with open(last_checkpoint_path, "r", encoding="utf-8") as f:
+            last_checkpoint = f.read().strip()
+        if last_checkpoint:
+            if os.path.isabs(last_checkpoint):
+                return last_checkpoint
+            return os.path.join(checkpoint_dir, last_checkpoint)
+
+    checkpoint_pattern = re.compile(r"^epoch_(\d+)\.pth$")
+    latest_epoch = -1
+    latest_checkpoint: str | None = None
+    if os.path.isdir(checkpoint_dir):
+        for entry in os.listdir(checkpoint_dir):
+            match = checkpoint_pattern.match(entry)
+            if not match:
+                continue
+            epoch = int(match.group(1))
+            if epoch > latest_epoch:
+                latest_epoch = epoch
+                latest_checkpoint = os.path.join(checkpoint_dir, entry)
+    if latest_checkpoint is not None:
+        return latest_checkpoint
+
+    raise FileNotFoundError(
+        f"无法解析 checkpoint: {resolved_path!r}。"
+        "请传入 --checkpoint-epoch，或确保模型目录下存在 last_checkpoint / epoch_*.pth"
+    )
+
+
+def _load_model_list_yaml(
+    yaml_path: str,
+    model_root: str | None = None,
+    checkpoint_epoch: int | None = None,
+) -> list[tuple[str, str, str]]:
     """从YAML文件加载模型列表。
 
     YAML格式:
       models:
         - name: MaskRCNN
-          config: work_dirs/.../config.py
-          checkpoint: work_dirs/.../epoch_50.pth
+          config: mask_rcnn/config.py
+          checkpoint: mask_rcnn/epoch_{epoch}.pth
         - name: SOLOv2
           ...
     """
@@ -84,7 +138,15 @@ def _load_model_list_yaml(yaml_path: str) -> list[tuple[str, str, str]]:
         data = yaml.safe_load(f)
     result = []
     for m in data.get("models", []):
-        result.append((str(m["name"]), str(m["config"]), str(m["checkpoint"])))
+        result.append(
+            (
+                str(m["name"]),
+                _resolve_model_path(str(m["config"]), model_root),
+                _resolve_checkpoint_path(
+                    str(m["checkpoint"]), model_root, checkpoint_epoch
+                ),
+            )
+        )
     return result
 
 
@@ -280,6 +342,10 @@ def main(argv: list[str] | None = None) -> int:
                    help="模型规格列表，格式: Name:config_path:checkpoint_path")
     p.add_argument("--model-cfg", default=None,
                    help="YAML模型配置文件路径（与 --models 二选一）")
+    p.add_argument("--model-root", default=None,
+                   help="模型配置和权重的公共根目录，用于补全 YAML 中的相对路径")
+    p.add_argument("--checkpoint-epoch", type=int, default=None,
+                   help="统一替换 YAML checkpoint 路径中的 {epoch} 占位符")
     p.add_argument("--score-thresh", type=float, default=0.5)
     p.add_argument("--min-pixels",   type=int,   default=10)
     p.add_argument("--device",       default="cuda:0")
@@ -302,7 +368,11 @@ def main(argv: list[str] | None = None) -> int:
     # 解析模型列表
     model_specs: list[tuple[str, str, str]] = []
     if args.model_cfg:
-        model_specs = _load_model_list_yaml(args.model_cfg)
+        model_specs = _load_model_list_yaml(
+            args.model_cfg,
+            args.model_root,
+            args.checkpoint_epoch,
+        )
     elif args.models:
         for spec in args.models:
             model_specs.append(_parse_model_spec(spec))

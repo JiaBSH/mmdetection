@@ -23,6 +23,11 @@ from pathlib import Path
 from PIL import Image
 
 
+# This is an offline preprocessing script for trusted local datasets, so allow
+# very large source images to be opened before resizing them down.
+Image.MAX_IMAGE_PIXELS = None
+
+
 # ---------------------------------------------------------------------------
 # helpers
 # ---------------------------------------------------------------------------
@@ -34,6 +39,7 @@ def _scale_factor(w: int, h: int, max_size: int) -> float:
 def _resize_image(args):
     src_path, dst_path, max_size = args
     dst_path.parent.mkdir(parents=True, exist_ok=True)
+    Image.MAX_IMAGE_PIXELS = None
     img = Image.open(src_path)
     orig_w, orig_h = img.size
     scale = _scale_factor(orig_w, orig_h, max_size)
@@ -148,12 +154,13 @@ def process_split(split: str, data_root: Path, out_root: Path, max_size: int,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-root", default="dataset_root/dataset",
+    parser.add_argument("--data-root", default="dataset_root/test_set",
                         help="Original dataset root")
-    parser.add_argument("--splits", nargs="+", default=["train", "val", "test"])
-    parser.add_argument("--max-size", type=int, default=1024,
+    #parser.add_argument("--splits", nargs="+", default=["train", "val", "test"])
+    parser.add_argument("--splits", nargs="+", default=["2_5x_unsup", "5x_unsup", "sr2_5x_unsup", "sr5x_unsup"])
+    parser.add_argument("--max-size", type=int, default=4096,
                         help="Longest side after resize")
-    parser.add_argument("--out-root", default="dataset_root/dataset_1024",
+    parser.add_argument("--out-root", default="dataset_root/test_set_1024",
                         help="Output dataset root")
     parser.add_argument("--num-workers", type=int, default=8)
     args = parser.parse_args()

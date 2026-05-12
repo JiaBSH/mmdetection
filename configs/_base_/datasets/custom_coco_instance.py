@@ -1,9 +1,10 @@
 # dataset settings for custom COCO-style instance segmentation
 
 dataset_type = 'CocoDataset'
-# Preprocessed dataset (images already resized to <=1024px longest side).
-# Run tools/preprocess_resize.py once to generate this directory.
-data_root = 'dataset_root/dataset_1024_aug/'
+
+# Placeholder only. Real dataset root is injected by submm.sh via --cfg-options.
+data_root = ''
+
 
 # Replace with your category names in annotation order.
 metainfo = dict(classes=('畴区', ))
