@@ -43,6 +43,7 @@ import argparse
 import csv
 import json
 import os
+import sys
 import traceback
 
 import numpy as np
@@ -55,41 +56,34 @@ from postprocess.coco_utils import (  # noqa: E402
 from postprocess.analyze_main_dy2 import (  # noqa: E402
     analyze_domain_geometry as _analyze_domain_geometry,
 )
+from postprocess.sliding_window_infer import (  # noqa: E402
+    infer_image_with_overlap_windows,
+)
 
 # ---------------------------------------------------------------------------
 # 推理单张图（MMDetection inference API）
 # ---------------------------------------------------------------------------
 
-def _infer_one_image(
-    model,
-    img_path: str,
+
+def _pred_instances_to_global_instances(
+    pred,
     *,
     score_thresh: float = 0.5,
     target_label: int = 0,
     min_pixel_count: int = 10,
-    device: str = "cuda:0",
-) -> tuple[list[dict], Image.Image]:
-    """推理单张图，返回 (global_instances, PIL_image_RGB)。"""
-    from mmdet.apis import inference_detector  # type: ignore
-
-    result = inference_detector(model, img_path)
-    pred = result.pred_instances
-
+) -> list[dict]:
+    """将 MMDet ``pred_instances`` 转为当前后处理使用的 global_instances。"""
     masks = getattr(pred, "masks", None)
     scores = getattr(pred, "scores", None)
     labels = getattr(pred, "labels", None)
     bboxes = getattr(pred, "bboxes", None)
 
     if masks is None:
-        return [], Image.open(img_path).convert("RGB")
+        return []
 
-    # 处理多种 MMDet3.x mask 格式：
-    #   - torch.Tensor (N,H,W)，可能在 GPU 上
-    #   - BitmapMasks 对象（mmdet.structures.mask）
-    #   - ndarray
-    if hasattr(masks, "to_ndarray"):  # BitmapMasks
+    if hasattr(masks, "to_ndarray"):
         masks_np = masks.to_ndarray().astype(bool)
-    elif hasattr(masks, "numpy"):     # torch.Tensor
+    elif hasattr(masks, "numpy"):
         if hasattr(masks, "cpu"):
             masks = masks.cpu()
         masks_np = masks.numpy().astype(bool)
@@ -105,22 +99,54 @@ def _infer_one_image(
             return t.numpy()
         return np.asarray(t)
 
-    scores_np = _to_numpy(scores)
-    labels_np = _to_numpy(labels)
-    bboxes_np = _to_numpy(bboxes)
-
-    instances = mmdet_masks_to_instances(
+    return mmdet_masks_to_instances(
         masks_np,
-        scores=scores_np,
-        labels=labels_np,
-        bboxes=bboxes_np,
+        scores=_to_numpy(scores),
+        labels=_to_numpy(labels),
+        bboxes=_to_numpy(bboxes),
         score_thresh=score_thresh,
         target_label=target_label,
         min_pixel_count=min_pixel_count,
     )
 
+def _infer_one_image(
+    model,
+    img_path: str,
+    *,
+    score_thresh: float = 0.5,
+    target_label: int = 0,
+    min_pixel_count: int = 10,
+    device: str = "cuda:0",
+    sliding_window: bool = False,
+    patch_size: int = 1024,
+    patch_overlap_ratio: float = 0.0,
+    batch_size: int = 1,
+) -> tuple[list[dict], Image.Image, list[dict], list[dict]]:
+    """推理单张图，返回 (global_instances, PIL_image_RGB)。"""
+    from mmdet.apis import inference_detector  # type: ignore
     pil_img = Image.open(img_path).convert("RGB")
-    return instances, pil_img
+
+    if not sliding_window:
+        result = inference_detector(model, img_path)
+        instances = _pred_instances_to_global_instances(
+            result.pred_instances,
+            score_thresh=score_thresh,
+            target_label=target_label,
+            min_pixel_count=min_pixel_count,
+        )
+        return instances, pil_img, [], []
+
+    instances, pil_img, windows, merge_records = infer_image_with_overlap_windows(
+        model,
+        img_path,
+        score_thresh=score_thresh,
+        target_label=target_label,
+        min_pixel_count=min_pixel_count,
+        patch_size=patch_size,
+        patch_overlap_ratio=patch_overlap_ratio,
+        batch_size=batch_size,
+    )
+    return instances, pil_img, windows, merge_records
 
 
 # ---------------------------------------------------------------------------
@@ -151,6 +177,105 @@ def _build_overlay(pil_img: Image.Image, instances: list[dict]) -> Image.Image:
     return Image.alpha_composite(base, overlay_img)
 
 
+def _save_sliding_window_visualization(
+    overlayed: Image.Image,
+    out_dir: str,
+    windows: list[dict],
+    instances: list[dict],
+    merge_records: list[dict],
+) -> None:
+    if not windows:
+        return
+
+    from PIL import ImageDraw, ImageFont
+
+    width, height = overlayed.size
+    windows_vis = overlayed.convert("RGBA")
+    vis_overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(vis_overlay)
+    for window in windows:
+        draw.rectangle(
+            [
+                int(window["left"]),
+                int(window["top"]),
+                int(window["right"]),
+                int(window["bottom"]),
+            ],
+            outline=(30, 144, 255, 200),
+            width=3,
+        )
+
+    windows_vis = Image.alpha_composite(windows_vis, vis_overlay)
+
+    record_mask = np.zeros((height, width, 4), dtype=np.uint8)
+    for record in merge_records:
+        removed_coords = record.get("removed_coords")
+        if isinstance(removed_coords, np.ndarray) and removed_coords.ndim == 1:
+            ys = (removed_coords // width).astype(np.int64)
+            xs = (removed_coords % width).astype(np.int64)
+            valid = (ys >= 0) & (ys < height) & (xs >= 0) & (xs < width)
+            if np.any(valid):
+                record_mask[ys[valid], xs[valid]] = (255, 0, 0, 150)
+
+        overlap = record.get("overlap")
+        if isinstance(overlap, np.ndarray) and overlap.ndim == 1 and overlap.size > 0:
+            ys = (overlap // width).astype(np.int64)
+            xs = (overlap % width).astype(np.int64)
+            valid = (ys >= 0) & (ys < height) & (xs >= 0) & (xs < width)
+            if np.any(valid):
+                record_mask[ys[valid], xs[valid]] = (0, 255, 0, 180)
+
+    windows_vis = Image.alpha_composite(
+        windows_vis,
+        Image.fromarray(record_mask, mode="RGBA"),
+    )
+
+    draw_labels = ImageDraw.Draw(windows_vis)
+    try:
+        font = ImageFont.truetype("arial.ttf", 36)
+    except Exception:
+        font = ImageFont.load_default()
+
+    for inst in instances:
+        coords = inst.get("coords")
+        if coords is None or len(coords) == 0:
+            continue
+        ys = coords[:, 0].astype(np.int64)
+        xs = coords[:, 1].astype(np.int64)
+        centroid_x = int(xs.mean())
+        centroid_y = int(ys.mean())
+        draw_labels.text(
+            (centroid_x, centroid_y),
+            f"#{inst['id']}",
+            fill=(0, 255, 0, 255),
+            font=font,
+        )
+
+    removed_ids_drawn: set[int | None] = set()
+    for record in merge_records:
+        removed_id = record.get("removed")
+        if removed_id is None or removed_id in removed_ids_drawn:
+            continue
+        removed_ids_drawn.add(removed_id)
+        removed_coords = record.get("removed_coords")
+        if not isinstance(removed_coords, np.ndarray) or removed_coords.ndim != 1:
+            continue
+        if removed_coords.size == 0:
+            continue
+        ys = (removed_coords // width).astype(np.int64)
+        xs = (removed_coords % width).astype(np.int64)
+        centroid_x = int(xs.mean())
+        centroid_y = int(ys.mean())
+        draw_labels.text(
+            (centroid_x, centroid_y),
+            f"-{removed_id}",
+            fill=(255, 0, 0, 255),
+            font=font,
+        )
+
+    windows_vis.save(os.path.join(out_dir, "overlap_windows_visualization.png"))
+
+
 # ---------------------------------------------------------------------------
 # 核心：单张图后处理
 # ---------------------------------------------------------------------------
@@ -170,6 +295,10 @@ def process_one_image(
     enable_gt: bool | None = None,
     enable_polygon_metrics: bool | None = None,
     device: str = "cuda:0",
+    sliding_window: bool = False,
+    patch_size: int = 1024,
+    patch_overlap_ratio: float = 0.0,
+    batch_size: int = 1,
     verbose: bool = True,
 ) -> dict:
     """对单张图推理并做几何分析，返回指标dict。
@@ -188,15 +317,22 @@ def process_one_image(
         print(f"\n{'='*60}")
         print(f"Processing: {img_name}")
 
+    windows: list[dict] = []
+    merge_records: list[dict] = []
+
     # 1) 推理
     try:
-        instances, pil_img = _infer_one_image(
+        instances, pil_img, windows, merge_records = _infer_one_image(
             model,
             img_path,
             score_thresh=score_thresh,
             target_label=target_label,
             min_pixel_count=min_pixel_count,
             device=device,
+            sliding_window=sliding_window,
+            patch_size=patch_size,
+            patch_overlap_ratio=patch_overlap_ratio,
+            batch_size=batch_size,
         )
     except Exception:
         tb = traceback.format_exc()
@@ -216,6 +352,20 @@ def process_one_image(
 
     # 2) 构建overlay
     overlayed = _build_overlay(pil_img, instances)
+    if sliding_window:
+        try:
+            _save_sliding_window_visualization(
+                overlayed,
+                out_dir,
+                windows,
+                instances,
+                merge_records,
+            )
+        except Exception:
+            tb = traceback.format_exc()
+            print(f"  ⚠️ 滑窗可视化保存失败: {img_name}\n{tb}")
+            with open(error_log, "a", encoding="utf-8") as _f:
+                _f.write(f"滑窗可视化保存失败:\n{tb}\n")
 
     # 3) 几何分析
     try:
@@ -381,6 +531,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--score-thresh",type=float, default=0.5,  help="预测置信度阈值")
     p.add_argument("--min-pixels",  type=int,   default=10,   help="实例最小像素数")
     p.add_argument("--device",      default="cuda:0")
+    p.add_argument("--sliding-window", action="store_true", default=False,
+                   help="启用滑窗推理；不启用时默认整图推理")
+    p.add_argument("--patch-size", type=int, default=1024,
+                   help="滑窗边长（像素）")
+    p.add_argument("--patch-overlap-ratio", type=float, default=0.0,
+                   help="相邻滑窗的交叠比例；0 表示非交叠，>0 表示交叠滑窗")
+    p.add_argument("--batch-size", type=int, default=1,
+                   help="滑窗推理 batch size")
     p.add_argument("--enable-plots",    action="store_true", default=False,
                    help="生成GT vs Pred直方图/R^2散点图（较慢）")
     p.add_argument("--enable-gt",       action="store_true", default=False,
@@ -440,6 +598,10 @@ def main(argv: list[str] | None = None) -> int:
                 enable_gt=True if args.enable_gt else None,
                 enable_polygon_metrics=True if args.enable_poly_metrics else None,
                 device=args.device,
+                sliding_window=args.sliding_window,
+                patch_size=args.patch_size,
+                patch_overlap_ratio=args.patch_overlap_ratio,
+                batch_size=args.batch_size,
             )
         except Exception:
             traceback.print_exc()

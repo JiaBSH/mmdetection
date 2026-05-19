@@ -131,6 +131,19 @@ def aug_crop(image, masks):
     return image, masks
 
 
+def restore_spatial_size(image, masks, target_h, target_w):
+    """Resize augmented outputs back to the original image size."""
+    if image.shape[:2] == (target_h, target_w):
+        return image, masks
+
+    image = cv2.resize(image, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
+    masks = [
+        cv2.resize(mask, (target_w, target_h), interpolation=cv2.INTER_NEAREST)
+        for mask in masks
+    ]
+    return image, masks
+
+
 def aug_color_jitter(image,
                      brightness=0.35,
                      contrast=0.35,
@@ -209,6 +222,8 @@ def apply_augmentation(image_rgb, annotations):
         image, instance_masks = aug_rotate(image, instance_masks)
     if random.random() < 0.5:
         image, instance_masks = aug_crop(image, instance_masks)
+
+    image, instance_masks = restore_spatial_size(image, instance_masks, h, w)
 
     # ── Photometric transforms (image only) ──────────────────
     if random.random() < 0.8:

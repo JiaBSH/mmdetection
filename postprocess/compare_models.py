@@ -170,6 +170,10 @@ def evaluate_model(
     enable_gt: bool = False,
     enable_polygon_metrics: bool = False,
     device: str = "cuda:0",
+    sliding_window: bool = False,
+    patch_size: int = 1024,
+    patch_overlap_ratio: float = 0.0,
+    batch_size: int = 1,
     verbose: bool = True,
 ) -> list[dict]:
     """对一个模型评估所有测试图，返回每张图的指标rows。"""
@@ -203,6 +207,10 @@ def evaluate_model(
                 enable_gt=True if enable_gt else None,
                 enable_polygon_metrics=True if enable_polygon_metrics else None,
                 device=device,
+                sliding_window=sliding_window,
+                patch_size=patch_size,
+                patch_overlap_ratio=patch_overlap_ratio,
+                batch_size=batch_size,
                 verbose=verbose,
             )
         except Exception:
@@ -349,6 +357,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--score-thresh", type=float, default=0.5)
     p.add_argument("--min-pixels",   type=int,   default=10)
     p.add_argument("--device",       default="cuda:0")
+    p.add_argument("--sliding-window", action="store_true", default=False,
+                   help="启用滑窗推理；不启用时默认整图推理")
+    p.add_argument("--patch-size", type=int, default=1024,
+                   help="滑窗边长（像素）")
+    p.add_argument("--patch-overlap-ratio", type=float, default=0.0,
+                   help="相邻滑窗交叠比例；0 为非交叠，>0 为交叠滑窗")
+    p.add_argument("--batch-size", type=int, default=1,
+                   help="滑窗推理 batch size")
     p.add_argument("--enable-plots",       action="store_true", default=False)
     p.add_argument("--enable-gt",          action="store_true", default=False)
     p.add_argument("--enable-poly-metrics", action="store_true", default=False)
@@ -409,6 +425,10 @@ def main(argv: list[str] | None = None) -> int:
                 enable_gt=args.enable_gt,
                 enable_polygon_metrics=args.enable_poly_metrics,
                 device=args.device,
+                sliding_window=args.sliding_window,
+                patch_size=args.patch_size,
+                patch_overlap_ratio=args.patch_overlap_ratio,
+                batch_size=args.batch_size,
             )
             all_rows.extend(rows)
         except Exception:
