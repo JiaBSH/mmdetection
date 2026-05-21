@@ -15,11 +15,11 @@ set -euo pipefail
 
 cd /hpcfs/fhome/sunxc/JiaBSH/mmdetection
 
-echo "===== test_set_1024 COCO mask AP ====="
+echo "===== test_set_1024 COCO mask AP + pixel metrics ====="
 
 MODEL_ROOT="${MODEL_ROOT:-work_dirs/custom_all_main}"
 CHECKPOINT_EPOCH="${CHECKPOINT_EPOCH:-}"
-COCO_OUT_ROOT="${COCO_OUT_ROOT:-outputs/coco_eval}"
+COCO_OUT_ROOT="${COCO_OUT_ROOT:-outputs/coco_eval_apmask}"
 MODEL_CFG="${MODEL_CFG:-postprocess/model_list.yaml}"
 VISUALIZE="${VISUALIZE:-0}"
 VIS_DIR_NAME="${VIS_DIR_NAME:-visualizations}"
@@ -29,6 +29,13 @@ PROFILE_PER_IMAGE="${PROFILE_PER_IMAGE:-1}"
 PROFILE_DIR_NAME="${PROFILE_DIR_NAME:-profile}"
 PROFILE_NUM_WARMUP="${PROFILE_NUM_WARMUP:-0}"
 PROFILE_MAX_IMAGES="${PROFILE_MAX_IMAGES:-0}"
+PIXEL_METRICS="${PIXEL_METRICS:-1}"
+PIXEL_DIR_NAME="${PIXEL_DIR_NAME:-pixel_metrics}"
+PIXEL_SCORE_THR="${PIXEL_SCORE_THR:-0.5}"
+PIXEL_MIN_PIXELS="${PIXEL_MIN_PIXELS:-10}"
+PIXEL_ENABLE_PLOTS="${PIXEL_ENABLE_PLOTS:-0}"
+PIXEL_ENABLE_GT="${PIXEL_ENABLE_GT:-0}"
+PIXEL_DEVICE="${PIXEL_DEVICE:-cuda:0}"
 
 resolve_checkpoint() {
     local checkpoint_template="$1"
@@ -70,7 +77,7 @@ generate_coco_summary() {
     local summary_dir="${COCO_OUT_ROOT}/${SUMMARY_DIR_NAME}"
     mkdir -p "${summary_dir}"
 
-    python - "${COCO_OUT_ROOT}" "${summary_dir}" "${VIS_DIR_NAME}" "${PROFILE_DIR_NAME}" <<'PY'
+    python - "${COCO_OUT_ROOT}" "${summary_dir}" "${VIS_DIR_NAME}" "${PROFILE_DIR_NAME}" "${PIXEL_DIR_NAME}" <<'PY'
 import csv
 import json
 import math
@@ -83,6 +90,7 @@ out_root = Path(sys.argv[1])
 summary_dir = Path(sys.argv[2])
 vis_dir_name = sys.argv[3]
 profile_dir_name = sys.argv[4]
+pixel_dir_name = sys.argv[5]
 
 metric_keys = [
     'coco/segm_mAP',
@@ -97,6 +105,28 @@ metric_keys = [
 
 rows = []
 timestamp_pattern = re.compile(r'^\d{8}_\d{6}$')
+
+
+def _safe_float(value):
+    try:
+        return float(value)
+    except Exception:
+        return float('nan')
+
+
+def _mean_csv_column(csv_path, column_name):
+    if not csv_path.is_file():
+        return float('nan'), 0
+    values = []
+    with open(csv_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            value = _safe_float(row.get(column_name, float('nan')))
+            if math.isfinite(value):
+                values.append(value)
+    if not values:
+        return float('nan'), 0
+    return float(sum(values) / len(values)), len(values)
 
 for split_dir in sorted(out_root.iterdir()):
     if not split_dir.is_dir() or split_dir.name == summary_dir.name:
@@ -130,7 +160,17 @@ for split_dir in sorted(out_root.iterdir()):
 
         vis_dir = latest_dir / vis_dir_name
         profile_dir = model_dir / profile_dir_name
+        pixel_dir = model_dir / pixel_dir_name
         profile_summary_json = profile_dir / 'profile_summary.json'
+        pixel_summary_csv = pixel_dir / 'metrics_summary.csv'
+
+        pixel_mean_iou, pixel_num_images = _mean_csv_column(pixel_summary_csv, 'iou')
+        pixel_mean_precision, _ = _mean_csv_column(pixel_summary_csv, 'precision')
+        pixel_mean_recall, _ = _mean_csv_column(pixel_summary_csv, 'recall')
+        pixel_mean_f1, _ = _mean_csv_column(pixel_summary_csv, 'f1')
+        pixel_mean_pred_coverage, _ = _mean_csv_column(pixel_summary_csv, 'pred_coverage')
+        pixel_mean_gt_coverage, _ = _mean_csv_column(pixel_summary_csv, 'gt_coverage')
+
         row = {
             'split': split_dir.name,
             'mode': 'plain',
@@ -143,6 +183,15 @@ for split_dir in sorted(out_root.iterdir()):
             'profile_csv': str(profile_dir / 'per_image_profile.csv') if (profile_dir / 'per_image_profile.csv').exists() else '',
             'profile_time_plot': str(profile_dir / 'per_image_time.png') if (profile_dir / 'per_image_time.png').exists() else '',
             'profile_memory_plot': str(profile_dir / 'per_image_memory.png') if (profile_dir / 'per_image_memory.png').exists() else '',
+            'pixel_dir': str(pixel_dir) if pixel_dir.exists() else '',
+            'pixel_summary_csv': str(pixel_summary_csv) if pixel_summary_csv.exists() else '',
+            'pixel_mean_iou': pixel_mean_iou,
+            'pixel_mean_precision': pixel_mean_precision,
+            'pixel_mean_recall': pixel_mean_recall,
+            'pixel_mean_f1': pixel_mean_f1,
+            'pixel_mean_pred_coverage': pixel_mean_pred_coverage,
+            'pixel_mean_gt_coverage': pixel_mean_gt_coverage,
+            'pixel_num_images': pixel_num_images,
         }
         for key in metric_keys:
             row[key] = metrics.get(key, float('nan'))
@@ -205,6 +254,15 @@ fieldnames = [
     'profile_csv',
     'profile_time_plot',
     'profile_memory_plot',
+    'pixel_dir',
+    'pixel_summary_csv',
+    'pixel_mean_iou',
+    'pixel_mean_precision',
+    'pixel_mean_recall',
+    'pixel_mean_f1',
+    'pixel_mean_pred_coverage',
+    'pixel_mean_gt_coverage',
+    'pixel_num_images',
     'mean_time_ms',
     'median_time_ms',
     'max_time_ms',
@@ -240,10 +298,7 @@ try:
     import matplotlib.pyplot as plt
 
     def _to_float(v):
-        try:
-            return float(v)
-        except Exception:
-            return float('nan')
+        return _safe_float(v)
 
     def _plot_grouped(rows_for_plot, metric_names, title, out_path):
         labels = [row['model'] for row in rows_for_plot]
@@ -353,6 +408,18 @@ try:
         summary_dir / 'coco_summary_memory.png',
         'Peak GPU Memory (MB)',
     )
+    _plot_grouped(
+        rows_sorted,
+        ['pixel_mean_iou', 'pixel_mean_f1'],
+        'Pixel-level Mask Metrics (IoU / F1)',
+        summary_dir / 'coco_summary_pixel_main.png',
+    )
+    _plot_grouped(
+        rows_sorted,
+        ['pixel_mean_precision', 'pixel_mean_recall'],
+        'Pixel-level Mask Metrics (Precision / Recall)',
+        summary_dir / 'coco_summary_pixel_pr.png',
+    )
 
     for split, split_rows in sorted(by_split.items()):
         split_rows = sorted(split_rows, key=lambda row: row['model'])
@@ -370,6 +437,18 @@ try:
             summary_dir / f'{split}_memory.png',
             'Peak GPU Memory (MB)',
         )
+        _plot_grouped(
+            split_rows,
+            ['pixel_mean_iou', 'pixel_mean_f1'],
+            f'{split} Pixel-level Mask Metrics (IoU / F1)',
+            summary_dir / f'{split}_pixel_main.png',
+        )
+        _plot_grouped(
+            split_rows,
+            ['pixel_mean_precision', 'pixel_mean_recall'],
+            f'{split} Pixel-level Mask Metrics (Precision / Recall)',
+            summary_dir / f'{split}_pixel_pr.png',
+        )
 except Exception as exc:
     print(f'⚠️ 绘图失败: {exc}')
 
@@ -378,6 +457,39 @@ for split in sorted(by_split):
     print(f'✅ 分组CSV: {summary_dir / (split + "_summary.csv")}')
 print(f'✅ 汇总目录: {summary_dir}')
 PY
+}
+
+run_pixel_metrics_eval() {
+    local config_path="$1"
+    local checkpoint_path="$2"
+    local ann_file="$3"
+    local img_dir="$4"
+    local work_dir="$5"
+
+    local pixel_dir="${work_dir}/${PIXEL_DIR_NAME}"
+    mkdir -p "${pixel_dir}"
+
+    local pixel_args=(
+        postprocess/run_postprocess.py
+        --config "${config_path}"
+        --checkpoint "${checkpoint_path}"
+        --ann-file "${ann_file}"
+        --img-dir "${img_dir}"
+        --out-dir "${pixel_dir}"
+        --score-thresh "${PIXEL_SCORE_THR}"
+        --min-pixels "${PIXEL_MIN_PIXELS}"
+        --device "${PIXEL_DEVICE}"
+        --enable-poly-metrics
+    )
+
+    if [[ "${PIXEL_ENABLE_PLOTS}" == "1" ]]; then
+        pixel_args+=(--enable-plots)
+    fi
+    if [[ "${PIXEL_ENABLE_GT}" == "1" ]]; then
+        pixel_args+=(--enable-gt)
+    fi
+
+    python "${pixel_args[@]}"
 }
 
 run_coco_eval() {
@@ -460,6 +572,16 @@ PY
                     "test_dataloader.dataset.data_root=" \
                     "test_dataloader.dataset.ann_file=${ann_file}" \
                     "test_dataloader.dataset.data_prefix.img=${img_dir}/"
+        fi
+
+        if [[ "${PIXEL_METRICS}" == "1" ]]; then
+            echo "pixel metrics: ${work_dir}/${PIXEL_DIR_NAME}"
+            run_pixel_metrics_eval \
+                "${config_path}" \
+                "${checkpoint_path}" \
+                "${ann_file}" \
+                "${img_dir}" \
+                "${work_dir}"
         fi
     done
 }
