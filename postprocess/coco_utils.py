@@ -25,6 +25,138 @@ import numpy as np
 from PIL import Image, ImageDraw
 
 
+def _isat_points_to_rc(segmentation: Any) -> np.ndarray:
+    """将ISAT segmentation转换为 (row, col) 顶点数组。"""
+    pts = np.asarray(segmentation, dtype=np.float32)
+    if pts.ndim == 1:
+        if pts.size < 6 or pts.size % 2 != 0:
+            return np.empty((0, 2), dtype=np.float32)
+        pts = pts.reshape(-1, 2)
+    if pts.ndim != 2 or pts.shape[0] < 3 or pts.shape[1] != 2:
+        return np.empty((0, 2), dtype=np.float32)
+    return pts[:, ::-1].copy()
+
+
+# ---------------------------------------------------------------------------
+# ISAT JSON → global_instances / polygon vertices
+# ---------------------------------------------------------------------------
+
+def load_isat_instances(
+    ann_file: str,
+    *,
+    category_names: list[str] | None = None,
+    exclude_categories: list[str] | None = None,
+    rasterize: bool = True,
+    image_size: tuple[int, int] | None = None,
+    min_pixel_count: int = 1,
+) -> tuple[list[dict], int, int]:
+    """从ISAT标注JSON加载实例，转换为global_instances格式。
+
+    Parameters
+    ----------
+    ann_file : str
+        ISAT JSON 路径。
+    category_names : list[str] | None
+        若提供，仅保留这些类别。
+    exclude_categories : list[str] | None
+        若提供，排除这些类别。
+    rasterize : bool
+        True 时将 polygon 光栅化为像素级 coords，适配 analyze_main_dy2。
+        False 时直接返回 polygon 顶点作为 coords。
+    image_size : tuple[int, int] | None
+        (H, W)，当 JSON 缺少 info.width/height 时使用。
+    min_pixel_count : int
+        过滤过小实例。
+    """
+    with open(ann_file, "r", encoding="utf-8") as f:
+        ann = json.load(f)
+
+    info = ann.get("info", {}) if isinstance(ann, dict) else {}
+    H = int(info.get("height") or 0)
+    W = int(info.get("width") or 0)
+    if (H <= 0 or W <= 0) and image_size is not None:
+        H, W = int(image_size[0]), int(image_size[1])
+    if H <= 0 or W <= 0:
+        raise ValueError(f"Missing valid image size in ISAT json: {ann_file}")
+
+    allowed = {str(x).strip() for x in category_names} if category_names else None
+    blocked = {str(x).strip() for x in exclude_categories} if exclude_categories else set()
+
+    instances: list[dict] = []
+    for idx, obj in enumerate(ann.get("objects", []), start=1):
+        category = str(obj.get("category", "")).strip()
+        if allowed is not None and category not in allowed:
+            continue
+        if category in blocked:
+            continue
+
+        pts_rc = _isat_points_to_rc(obj.get("segmentation", []))
+        if len(pts_rc) < 3:
+            continue
+
+        if rasterize:
+            mask_img = Image.new("L", (W, H), 0)
+            draw = ImageDraw.Draw(mask_img)
+            draw.polygon([(float(p[1]), float(p[0])) for p in pts_rc], outline=1, fill=1)
+            mask_np = np.array(mask_img, dtype=np.bool_)
+            ys, xs = np.where(mask_np)
+            if ys.size < min_pixel_count:
+                continue
+            coords = np.stack([ys, xs], axis=1).astype(np.int32)
+            bbox = [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
+        else:
+            coords = pts_rc.astype(np.float32)
+            xs = coords[:, 1]
+            ys = coords[:, 0]
+            bbox = [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
+
+        score = obj.get("score", obj.get("layer", 1.0))
+        try:
+            score = float(score)
+        except Exception:
+            score = 1.0
+
+        instances.append({
+            "id": int(obj.get("group", idx)),
+            "coords": coords,
+            "bbox": bbox,
+            "score": score,
+        })
+
+    return instances, W, H
+
+
+def load_isat_polygons(
+    ann_file: str,
+    *,
+    category_names: list[str] | None = None,
+    exclude_categories: list[str] | None = None,
+) -> tuple[list[np.ndarray], int, int]:
+    """从ISAT标注JSON加载 polygon 顶点列表，返回 (row, col) 数组。"""
+    with open(ann_file, "r", encoding="utf-8") as f:
+        ann = json.load(f)
+
+    info = ann.get("info", {}) if isinstance(ann, dict) else {}
+    H = int(info.get("height") or 0)
+    W = int(info.get("width") or 0)
+
+    allowed = {str(x).strip() for x in category_names} if category_names else None
+    blocked = {str(x).strip() for x in exclude_categories} if exclude_categories else set()
+
+    polygons: list[np.ndarray] = []
+    for obj in ann.get("objects", []):
+        category = str(obj.get("category", "")).strip()
+        if allowed is not None and category not in allowed:
+            continue
+        if category in blocked:
+            continue
+        pts_rc = _isat_points_to_rc(obj.get("segmentation", []))
+        if len(pts_rc) >= 3:
+            polygons.append(pts_rc)
+
+    return polygons, W, H
+
+
 # ---------------------------------------------------------------------------
 # GT: COCO JSON → global_instances
 # ---------------------------------------------------------------------------

@@ -1,5 +1,30 @@
 import numpy as np
-import cv2
+try:
+    import cv2
+except ImportError:
+    cv2 = None
+
+from scipy.ndimage import binary_erosion
+
+
+def _fallback_contour_points(canvas):
+    mask = canvas > 0
+    if not np.any(mask):
+        return None
+
+    boundary = mask & ~binary_erosion(mask, structure=np.ones((3, 3), dtype=bool), border_value=0)
+    cc, rr = np.where(boundary)
+    if rr.size < 3:
+        return None
+
+    pts = np.stack([rr, cc], axis=1).astype(np.float32)
+    center = pts.mean(axis=0, keepdims=True)
+    rel = pts - center
+    angles = np.arctan2(rel[:, 1], rel[:, 0])
+    order = np.argsort(angles)
+    return pts[order].astype(np.int32)
+
+
 def ex_c(global_instances):
     output=[]
     # NOTE: `instance['coords']` is expected to be an iterable of (row, col) points.
@@ -41,11 +66,17 @@ def ex_c(global_instances):
             continue
         canvas[cc, rr] = 255
 
-        contours, _ = cv2.findContours(canvas, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-        if not contours:
-            continue
-        contour = max(contours, key=cv2.contourArea)
-        wlu = contour.reshape(-1, 2)
+        if cv2 is not None:
+            contours, _ = cv2.findContours(canvas, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+            if not contours:
+                continue
+            contour = max(contours, key=cv2.contourArea)
+            wlu = contour.reshape(-1, 2)
+        else:
+            wlu = _fallback_contour_points(canvas)
+            if wlu is None:
+                continue
+
         # Shift back to global (row, col)
         wlu[:, 0] += r0
         wlu[:, 1] += c0

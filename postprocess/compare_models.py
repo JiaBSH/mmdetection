@@ -44,11 +44,8 @@ _TEMP_DIR = os.path.join(_REPO_ROOT, "temp")
 if _TEMP_DIR not in sys.path:
     sys.path.insert(0, _TEMP_DIR)
 
-from postprocess.run_postprocess import (  # noqa: E402
-    _get_test_images,
-    _load_model,
-    process_one_image,
-)
+from postprocess.aggregate_matched_metrics import aggregate_root_dir  # noqa: E402
+from postprocess.summarize_model_metrics import write_model_summary_csv  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -154,6 +151,15 @@ def _load_model_list_yaml(
 # 单模型评估
 # ---------------------------------------------------------------------------
 
+def _load_postprocess_runtime():
+    from postprocess.run_postprocess import (
+        _get_test_images,
+        _load_model,
+        process_one_image,
+    )
+
+    return _get_test_images, _load_model, process_one_image
+
 def evaluate_model(
     model_name: str,
     config: str,
@@ -177,6 +183,7 @@ def evaluate_model(
     verbose: bool = True,
 ) -> list[dict]:
     """对一个模型评估所有测试图，返回每张图的指标rows。"""
+    _, _load_model, process_one_image = _load_postprocess_runtime()
     model_out_dir = os.path.join(out_dir, model_name)
     os.makedirs(model_out_dir, exist_ok=True)
 
@@ -331,6 +338,25 @@ def plot_comparison(mean_csv: str, out_dir: str) -> None:
         pass
 
 
+def write_geometry_summaries(out_dir: str) -> None:
+    root_dir = Path(out_dir)
+    matched_output_name = 'matched_metrics_merged.csv'
+    summary_output_name = 'model_metrics_mae_summary.csv'
+
+    aggregated_models = aggregate_root_dir(root_dir, matched_output_name)
+    if aggregated_models == 0:
+        print(f"⚠️ 未找到可汇总的 matched_metrics.csv: {root_dir}")
+        return
+
+    output_path, row_count = write_model_summary_csv(
+        root_dir,
+        summary_output_name,
+        matched_name=matched_output_name,
+        summary_name='metrics_summary.csv',
+    )
+    print(f"✅ 几何 MAE 汇总CSV: {output_path} ({row_count} 个模型)")
+
+
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
@@ -371,6 +397,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--scale-ratio", type=float, default=None)
     p.add_argument("--scale-unit",  default=None)
     args = p.parse_args(argv)
+    _get_test_images, _, _ = _load_postprocess_runtime()
 
     # 环境变量设置
     if args.enable_plots:
@@ -450,6 +477,12 @@ def main(argv: list[str] | None = None) -> int:
     print(f"✅ 均值对比CSV: {mean_csv}")
 
     plot_comparison(mean_csv, args.out_dir)
+
+    try:
+        write_geometry_summaries(args.out_dir)
+    except Exception:
+        traceback.print_exc()
+        print(f"⚠️ 几何汇总生成失败: {args.out_dir}")
 
     return 0
 
