@@ -1,83 +1,105 @@
 #!/bin/bash
-#SBATCH --job-name=mm_batch8
-#SBATCH -p qgpu_4090
+#SBATCH --job-name=mmdet
+#SBATCH -p gpu
 #SBATCH -N 1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=32G
 #SBATCH --time=48:00:00
+#SBATCH --output=logs/slurm_%j.out
+#SBATCH --error=logs/slurm_%j.err
 
-# ---------------------------------------------------------------------------
-# User configuration
-# ---------------------------------------------------------------------------
-CONDA_PROFILE_SCRIPT="/hpcfs/fpublic/app/miniforge3/conda/etc/profile.d/conda.sh"
-CONDA_ENV_NAME="openmmlab2"
-PROJECT_ROOT="/hpcfs/fhome/sunxc/JiaBSH/mmdetection"
-CONFIG_DIR="configs/custom_pretrain"
-WORK_DIR_ROOT="work_dirs/custom_all_main_es_max50"
+# =============================================================================
+# mmdetection batch training script — RTX 5090 (Blackwell sm_120)
+# =============================================================================
+# Usage:
+#   sbatch submm.sh
+#   DATA_ROOT=/path/to/data sbatch submm.sh
+#   TEST_MAX_EPOCHS=10 CONFIG_DIR=configs/custom sbatch submm.sh
+# =============================================================================
+
+# ── User configuration ──────────────────────────────────────────────────────
+
+CONDA_BASE="/data/apps/miniforge/25.3.0-3"
+CONDA_ENV_NAME="mmdetection_para"
+PROJECT_ROOT="/data/run01/scvi576/JiaBSH/mmdetection_para"
+CUDA_HOME="${CUDA_HOME:-/data/apps/cuda/12.8}"
+
+# Directories (relative to PROJECT_ROOT)
+CONFIG_DIR="${CONFIG_DIR:-configs/custom_pretrain}"
+WORK_DIR_ROOT="${WORK_DIR_ROOT:-work_dirs/run_$(date +%Y%m%d_%H%M%S)}"
 TRAIN_TEST_SCRIPT="tools/train_then_test_instance_seg.sh"
-DATA_ROOT="${DATA_ROOT:-dataset_root/dataset_1024_aug/}"
+DATA_ROOT="${DATA_ROOT:-dataset_root/mmdata_isat/}"
+
+# Training parameters
 NUM_GPUS=1
 TEST_MAX_EPOCHS="${TEST_MAX_EPOCHS:-50}"
 TEST_TRAIN_BATCH_SIZE="${TEST_TRAIN_BATCH_SIZE:-2}"
 TEST_VAL_BATCH_SIZE="${TEST_VAL_BATCH_SIZE:-2}"
 TEST_TEST_BATCH_SIZE="${TEST_TEST_BATCH_SIZE:-2}"
+
+# Early stopping
 ENABLE_EARLY_STOPPING="${ENABLE_EARLY_STOPPING:-1}"
 EARLY_STOP_MONITOR="${EARLY_STOP_MONITOR:-coco/segm_mAP}"
 EARLY_STOP_PATIENCE="${EARLY_STOP_PATIENCE:-5}"
 EARLY_STOP_MIN_DELTA="${EARLY_STOP_MIN_DELTA:-0.0}"
 EARLY_STOP_RULE="${EARLY_STOP_RULE:-greater}"
 EARLY_STOP_THRESHOLD="${EARLY_STOP_THRESHOLD:-}"
+
+# Optional additional Python packages (module_name:package_name)
 REQUIRED_PYTHON_MODULES=(
     "skimage:scikit-image"
     "mmpretrain:mmpretrain"
     "instaboostfast:instaboostfast"
 )
 
-# ❗不要 load python module
-module purge
+# ── Environment setup ───────────────────────────────────────────────────────
 
-# ✅ 用你自己的 conda
-source "$CONDA_PROFILE_SCRIPT"
+module purge 2>/dev/null || true
 
-#conda init
+source "${CONDA_BASE}/etc/profile.d/conda.sh"
 conda activate "$CONDA_ENV_NAME"
+
+export CUDA_HOME
+export PATH="${CUDA_HOME}/bin:${PATH}"
 
 set -euo pipefail
 
-# ---------------------------------------------------------------------------
-# Collect model statistics after each run:
-#   params (M), train peak memory (MiB), inference time/image (ms), FPS.
-# ---------------------------------------------------------------------------
+# ── Helper functions ────────────────────────────────────────────────────────
+
+ensure_python_module() {
+    local module_name="$1"
+    local package_name="$2"
+
+    if ! python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('${module_name}') else 1)" 2>/dev/null; then
+        echo "[setup] Installing missing package: $package_name"
+        python -m pip install "$package_name" --quiet
+    fi
+}
+
 collect_model_stats() {
     local config_path="$1"
     local work_dir="$2"
 
     python - "$config_path" "$work_dir" <<'PY'
-import json
-import re
-import sys
-import copy
-import pathlib
+import json, re, sys, copy, pathlib
 
 config_path = pathlib.Path(sys.argv[1])
 work_dir    = pathlib.Path(sys.argv[2])
 
-# ── 1. Parameter count (CPU, no weights needed) ──────────────────────────────
+# 1. Parameter count
 try:
     from mmdet.utils import register_all_modules
     register_all_modules(init_default_scope=True)
     from mmengine.config import Config
     from mmdet.registry import MODELS
     cfg = Config.fromfile(str(config_path))
-    # deepcopy keeps ConfigDict (attribute access); then strip weight keys
     model_cfg = copy.deepcopy(cfg.model)
     def _strip_init_cfg(node):
         if isinstance(node, dict):
-            node.pop('init_cfg', None)
-            node.pop('load_from', None)
-            node.pop('pretrained', None)
-            for v in list(node.values()):
+            for key in ('init_cfg', 'load_from', 'pretrained'):
+                node.pop(key, None)
+            for v in node.values():
                 _strip_init_cfg(v)
         elif isinstance(node, (list, tuple)):
             for v in node:
@@ -90,7 +112,7 @@ except Exception as e:
     params_m = float('nan')
     print(f'[warn] param count failed: {e}', file=sys.stderr)
 
-# ── 2. Train peak memory (MiB) from scalars.json ────────────────────────────
+# 2. Train peak memory (MiB) from scalars.json
 train_mem = float('nan')
 try:
     scalars_files = sorted(work_dir.glob('*/vis_data/scalars.json'))
@@ -109,9 +131,9 @@ try:
 except Exception as e:
     print(f'[warn] train memory read failed: {e}', file=sys.stderr)
 
-# ── 3. Inference time + FPS from run.log "Epoch(test)" line ─────────────────
+# 3. Inference time + FPS from run.log
 test_time_ms = float('nan')
-fps          = float('nan')
+fps = float('nan')
 try:
     log_file = work_dir / 'run.log'
     time_pat = re.compile(r'\btime:\s*([\d.]+)')
@@ -128,7 +150,7 @@ try:
 except Exception as e:
     print(f'[warn] run.log time parse failed: {e}', file=sys.stderr)
 
-# ── 4. Output TSV row ────────────────────────────────────────────────────────
+# 4. Output
 def fmt(v):
     if isinstance(v, float) and v != v:
         return 'N/A'
@@ -162,34 +184,30 @@ print_stats_table() {
 
 print_summary_table() {
     local summary_file="$1"
-
+    echo ""
     echo "===== RUN SUMMARY ====="
-        printf '%-45s | %-10s | %-12s | %-10s | %s\n' \
-            "MODEL" "RUN" "WEIGHTS" "LOAD_OK" "REASON"
-        printf '%-45s-+-%-10s-+-%-12s-+-%-10s-+-%s\n' \
+    printf '%-45s | %-10s | %-12s | %-10s | %s\n' \
+        "MODEL" "RUN" "WEIGHTS" "LOAD_OK" "REASON"
+    printf '%-45s-+-%-10s-+-%-12s-+-%-10s-+-%s\n' \
         "---------------------------------------------" \
-            "----------" "------------" "----------" \
+        "----------" "------------" "----------" \
         "------------------------------"
-
-        while IFS=$'\t' read -r model run_status weights_source load_ok reason; do
-            printf '%-45s | %-10s | %-12s | %-10s | %s\n' \
-                "$model" "$run_status" "$weights_source" "$load_ok" "$reason"
+    while IFS=$'\t' read -r model run_status weights_source load_ok reason; do
+        printf '%-45s | %-10s | %-12s | %-10s | %s\n' \
+            "$model" "$run_status" "$weights_source" "$load_ok" "$reason"
     done < "$summary_file"
 }
 
 is_model_completed() {
     local work_dir="$1"
-
-    [[ $(find "$work_dir" -maxdepth 1 \( -name 'best_*.pth' -o -name 'latest.pth' -o -name 'epoch_*.pth' -o -name 'iter_*.pth' \) | head -n 1) \
+    [[ $(find "$work_dir" -maxdepth 1 \( -name 'best_*.pth' -o -name 'latest.pth' -o -name 'epoch_*.pth' -o -name 'iter_*.pth' \) 2>/dev/null | head -n 1) \
         && -d "$work_dir/test" && -d "$work_dir/metric_plots" ]]
 }
 
 extract_failure_reason() {
     local log_file="$1"
-
     python - "$log_file" <<'PY'
-import pathlib
-import sys
+import pathlib, sys
 
 log_path = pathlib.Path(sys.argv[1])
 if not log_path.exists():
@@ -199,13 +217,8 @@ if not log_path.exists():
 lines = [line.strip() for line in log_path.read_text(errors='ignore').splitlines() if line.strip()]
 
 priority_prefixes = (
-    'RuntimeError:',
-    'ImportError:',
-    'ModuleNotFoundError:',
-    'FileNotFoundError:',
-    'AssertionError:',
-    'ValueError:',
-    'KeyError:',
+    'RuntimeError:', 'ImportError:', 'ModuleNotFoundError:',
+    'FileNotFoundError:', 'AssertionError:', 'ValueError:', 'KeyError:',
 )
 
 for prefix in priority_prefixes:
@@ -215,7 +228,7 @@ for prefix in priority_prefixes:
             raise SystemExit(0)
 
 for line in reversed(lines):
-    if 'No module named' in line or 'not installed' in line or 'FAILED' in line:
+    if any(kw in line for kw in ('No module named', 'not installed', 'FAILED')):
         print(line)
         raise SystemExit(0)
 
@@ -228,8 +241,7 @@ detect_weight_load_status() {
     local weights_source="$2"
 
     python - "$log_file" "$weights_source" <<'PY'
-import pathlib
-import sys
+import pathlib, sys
 
 log_path = pathlib.Path(sys.argv[1])
 weights_source = sys.argv[2]
@@ -245,10 +257,7 @@ if not log_path.exists():
 lines = log_path.read_text(errors='ignore').splitlines()
 load_markers = ('Loads checkpoint by', 'Load checkpoint from')
 failure_markers = (
-    'FileNotFoundError:',
-    'RuntimeError:',
-    'URLError',
-    'HTTPError',
+    'FileNotFoundError:', 'RuntimeError:', 'URLError', 'HTTPError',
     'No such file or directory',
 )
 
@@ -271,7 +280,6 @@ get_weight_info() {
 
     python - "$config_path" <<'PY'
 import sys
-
 from mmengine.config import Config
 
 
@@ -305,28 +313,30 @@ else:
 PY
 }
 
-ensure_python_module() {
-    local module_name="$1"
-    local package_name="$2"
+# ── Main ────────────────────────────────────────────────────────────────────
 
-    if ! python -c "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('${module_name}') else 1)"; then
-        echo "Installing missing package: $package_name"
-        python -m pip install "$package_name"
-    fi
-}
+echo "===== ENVIRONMENT INFO ====="
+echo "Job ID:     ${SLURM_JOB_ID:-none}"
+echo "Node:       $(hostname)"
+echo "GPU:        $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || echo 'unknown')"
+echo "Python:     $(python -V 2>&1)"
+echo "PyTorch:    $(python -c 'import torch; print(torch.__version__)' 2>/dev/null || echo 'unknown')"
+echo "mmcv:       $(python -c 'import mmcv; print(mmcv.__version__)' 2>/dev/null || echo 'unknown')"
+echo "mmdet:      $(python -c 'import mmdet; print(mmdet.__version__)' 2>/dev/null || echo 'unknown')"
+echo "CUDA_HOME:  $CUDA_HOME"
+echo "DATA_ROOT:  $DATA_ROOT"
+echo "============================"
 
-echo "===== DEBUG ====="
-which python
-python -V
-pip list | grep -E "mmcv|mmdet|mmengine"
-echo "================="
-
+# Install any missing optional packages
 for module_spec in "${REQUIRED_PYTHON_MODULES[@]}"; do
     IFS=':' read -r module_name package_name <<< "$module_spec"
     ensure_python_module "$module_name" "$package_name"
 done
 
 cd "$PROJECT_ROOT"
+
+# Create output directories
+mkdir -p logs
 
 COMMON_CFG_OPTIONS=(
     --cfg-options
@@ -356,14 +366,17 @@ if [[ "$ENABLE_EARLY_STOPPING" == "1" ]]; then
     fi
 fi
 
+# Collect config files
 shopt -s nullglob
 configs=("$CONFIG_DIR"/*.py)
 shopt -u nullglob
 
 if [[ ${#configs[@]} -eq 0 ]]; then
-    echo "No config files found under $CONFIG_DIR"
+    echo "ERROR: No config files found under $CONFIG_DIR"
     exit 1
 fi
+
+echo "Found ${#configs[@]} config(s) in $CONFIG_DIR"
 
 mkdir -p "$WORK_DIR_ROOT"
 SUMMARY_FILE="$WORK_DIR_ROOT/run_summary.tsv"
@@ -382,36 +395,41 @@ for config in "${configs[@]}"; do
     load_ok="unknown"
 
     mkdir -p "$work_dir"
+
     IFS=$'\t' read -r weights_source weights_detail < <(get_weight_info "$config")
 
+    # Skip already-completed models
     if is_model_completed "$work_dir"; then
+        echo ""
         echo "===== SKIPPING COMPLETED: $config_name ====="
         load_ok=$(detect_weight_load_status "$log_file" "$weights_source")
         reason="already completed"
         printf '%s\t%s\t%s\t%s\t%s\n' \
             "$config_name" "$run_status" "$weights_source" "$load_ok" "$reason" >> "$SUMMARY_FILE"
-        if ! collect_model_stats "$config" "$work_dir" >> "$STATS_FILE" 2>> "$log_file"; then
-            echo "[warn] Failed to collect model stats for $config_name" | tee -a "$log_file"
-        fi
+        collect_model_stats "$config" "$work_dir" >> "$STATS_FILE" 2>/dev/null || true
         continue
     fi
 
-
     : > "$log_file"
 
+    echo ""
     echo "===== RUNNING: $config_name ====="
-    if ! bash "$TRAIN_TEST_SCRIPT" \
+    echo "Start: $(date)"
+
+    if bash "$TRAIN_TEST_SCRIPT" \
         "$config" \
         "$NUM_GPUS" \
         "$work_dir" \
         "${COMMON_CFG_OPTIONS[@]}" \
         "${EARLY_STOP_ARGS[@]}" 2>&1 | tee -a "$log_file"; then
+        run_status="OK"
+    else
         echo "FAILED: $config_name"
         run_status="FAILED"
         failed_configs+=("$config_name")
-    else
-        run_status="OK"
     fi
+
+    echo "End: $(date)"
 
     load_ok=$(detect_weight_load_status "$log_file" "$weights_source")
     if [[ "$run_status" == "OK" ]]; then
@@ -428,19 +446,20 @@ for config in "${configs[@]}"; do
         "$config_name" "$run_status" "$weights_source" "$load_ok" "$reason" >> "$SUMMARY_FILE"
 
     if [[ "$run_status" == "OK" ]]; then
-        if ! collect_model_stats "$config" "$work_dir" >> "$STATS_FILE" 2>> "$log_file"; then
-            echo "[warn] Failed to collect model stats for $config_name" | tee -a "$log_file"
-        fi
+        collect_model_stats "$config" "$work_dir" >> "$STATS_FILE" 2>/dev/null || true
     fi
 done
 
+# Print final summary
 print_summary_table "$SUMMARY_FILE"
 print_stats_table "$STATS_FILE"
 
 if [[ ${#failed_configs[@]} -gt 0 ]]; then
+    echo ""
     echo "===== FAILED CONFIGS ====="
-    printf '%s\n' "${failed_configs[@]}"
+    printf '  %s\n' "${failed_configs[@]}"
     exit 1
 fi
 
+echo ""
 echo "All configs under $CONFIG_DIR completed successfully."

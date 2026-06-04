@@ -1,0 +1,6 @@
+[submodule "Microscope_Magnification_Identification"]
+	path = Microscope_Magnification_Identification
+	url = git@github.com:JiaBSH/Microscope_Magnification_Identification.git
+[submodule "sys_G"]
+	path = sys_G
+	url = git@github.com:JiaBSH/sys_G.git

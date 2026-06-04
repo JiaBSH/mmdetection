@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(nvidia-smi)",
+      "Bash(conda info *)",
+      "Read(//hpcfs/fpublic/app/miniforge3/conda/etc/profile.d/**)"
+    ]
+  }
+}
