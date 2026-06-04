@@ -3,6 +3,7 @@ import os
 import numpy as np
 from collections import Counter
 
+
 def check_split(json_path, image_dir):
     print(f"\n--- Checking {os.path.basename(json_path)} ---")
     if not os.path.exists(json_path):
