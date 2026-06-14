@@ -1596,7 +1596,7 @@ def analyze_domain_geometry(
         all_polygons,
         save_path=os.path.join(save_dir, "polygons_overlay.png"),
         outline="orange",
-        width=3,
+        width=0,
         draw_hull_points=False
     )
 

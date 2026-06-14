@@ -128,3 +128,4 @@ work_dirs/
 slurm-*
 temp_bl/
 outputs/
+logs/

@@ -1,25 +1,8 @@
-import matplotlib.pyplot as plt
 import os
 
+import matplotlib.pyplot as plt
 
-def _env_int(name: str, default: int) -> int:
-    v = os.getenv(name)
-    if v is None:
-        return int(default)
-    try:
-        return int(str(v).strip())
-    except Exception:
-        return int(default)
-
-
-def _env_float(name: str, default: float) -> float:
-    v = os.getenv(name)
-    if v is None:
-        return float(default)
-    try:
-        return float(str(v).strip())
-    except Exception:
-        return float(default)
+from ._shared import _env_int, _env_float
 
 
 def plot_hist(data, bins, color, title, xlabel, ylabel, save_path, xlim=None):

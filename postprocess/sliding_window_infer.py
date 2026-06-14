@@ -5,15 +5,7 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
-
-def _to_numpy(data: Any) -> np.ndarray | None:
-    if data is None:
-        return None
-    if hasattr(data, "cpu"):
-        data = data.cpu()
-    if hasattr(data, "numpy"):
-        return data.numpy()
-    return np.asarray(data)
+from ._shared import _to_numpy
 
 
 def _bbox_overlap(box1: list[int], box2: list[int]) -> bool:

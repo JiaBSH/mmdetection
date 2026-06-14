@@ -154,13 +154,13 @@ def process_split(split: str, data_root: Path, out_root: Path, max_size: int,
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-root", default="dataset_root/test_set",
+    parser.add_argument("--data-root", default="dataset_root/mmdata_test",
                         help="Original dataset root")
     #parser.add_argument("--splits", nargs="+", default=["train", "val", "test"])
-    parser.add_argument("--splits", nargs="+", default=["2_5x_unsup", "5x_unsup", "sr2_5x_unsup", "sr5x_unsup"])
-    parser.add_argument("--max-size", type=int, default=4096,
+    parser.add_argument("--splits", nargs="+", default=["20x", "50x", "100x"])
+    parser.add_argument("--max-size", type=int, default=1024,
                         help="Longest side after resize")
-    parser.add_argument("--out-root", default="dataset_root/test_set_1024",
+    parser.add_argument("--out-root", default="dataset_root/mmdata_test_1024",
                         help="Output dataset root")
     parser.add_argument("--num-workers", type=int, default=8)
     args = parser.parse_args()

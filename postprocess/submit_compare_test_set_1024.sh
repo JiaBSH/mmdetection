@@ -1,27 +1,71 @@
 #!/bin/bash
-#SBATCH --job-name=postproc_t1024
-#SBATCH -p qgpu_4090
+#SBATCH --job-name=post
+#SBATCH -p gpu
 #SBATCH -N 1
 #SBATCH --gres=gpu:1
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
-#SBATCH --time=36:00:00
+#SBATCH --time=48:00:00
+#SBATCH --output=logs/slurm_%j.out
+#SBATCH --error=logs/slurm_%j.err
 
-module purge
-source /hpcfs/fpublic/app/miniforge3/conda/etc/profile.d/conda.sh
-conda activate openmmlab2
+set -euo pipefail
 
-cd /hpcfs/fhome/sunxc/JiaBSH/mmdetection
+# ── Environment ──────────────────────────────────────────────────────────────
+CONDA_BASE="${CONDA_BASE:-/data/apps/miniforge/25.3.0-3}"
+CONDA_ENV="${CONDA_ENV_NAME:-mmdetection_para}"
+PROJECT_ROOT="${PROJECT_ROOT:-/data/run01/scvi576/JiaBSH/mmdetection_para}"
+TORCH_HOME="${TORCH_HOME:-/data/run01/scvi576/JiaBSH/.torch_cache}"
+CUDA_HOME="${CUDA_HOME:-/data/apps/cuda/12.8}"
+
+module purge 2>/dev/null || true
+source "${CONDA_BASE}/etc/profile.d/conda.sh"
+conda activate "$CONDA_ENV"
+
+export CUDA_HOME
+export PATH="${CUDA_HOME}/bin:${PATH}"
+export PYTHONPATH="${PROJECT_ROOT}:${PYTHONPATH:-}"
+export TORCH_HOME
+
+# ── libstdc++ workaround ────────────────────────────────────────────────────
+# mmcv was compiled with GCC 15.x (requires CXXABI_1.3.15), but the system
+# /lib/x86_64-linux-gnu/libstdc++.so.6 only provides up to CXXABI_1.3.13.
+# Preload the newer libstdc++ from the conda environment (installed via
+# conda install -n mmdet_cu128 libstdcxx-ng).
+CONDA_ENV_LIB="${CONDA_PREFIX}/lib/libstdc++.so.6"
+if [[ -f "$CONDA_ENV_LIB" ]]; then
+    export LD_PRELOAD="$CONDA_ENV_LIB${LD_PRELOAD:+:$LD_PRELOAD}"
+    echo "[setup] LD_PRELOAD = $LD_PRELOAD"
+else
+    echo "[setup] WARNING: newer libstdc++ not found at $CONDA_ENV_LIB"
+fi
+cd /data/home/scvi576/run/JiaBSH/mmdetection_para
 
 echo "===== test_set_1024 多模型测评 ====="
 
-MODEL_ROOT="${MODEL_ROOT:-work_dirs/custom_all_main}"
+# ── 基本路径 ──────────────────────────────────────────────────────────────────
+MODEL_ROOT="${MODEL_ROOT:-work_dirs/run_isat_aug}"
 CHECKPOINT_EPOCH="${CHECKPOINT_EPOCH:-}"
+OUT_ROOT="${OUT_ROOT:-outputs/run_isat_aug}"
+
+# ── 滑窗/推理参数 ────────────────────────────────────────────────────────────
 PATCH_SIZE="${PATCH_SIZE:-512}"
 PATCH_OVERLAP_RATIO="${PATCH_OVERLAP_RATIO:-0.2}"
-BATCH_SIZE="${BATCH_SIZE:-1}"
-OUT_ROOT="${OUT_ROOT:-outputs/test_overlap_set_1024}"
+BATCH_SIZE="${BATCH_SIZE:-4}"
 SCORE_THRESH="${SCORE_THRESH:-0.5}"
+
+# ── 功能开关（0=关闭, 1=开启）────────────────────────────────────────────────
+ENABLE_GT="${ENABLE_GT:-1}"                  # GT 几何分析（取向/尺寸）
+ENABLE_GT_MATCHING="${ENABLE_GT_MATCHING:-1}" # GT↔Pred 实例匹配
+ENABLE_POLY_METRICS="${ENABLE_POLY_METRICS:-1}" # 多边形 IoU/F1 评估
+ENABLE_PLOTS="${ENABLE_PLOTS:-1}"            # 直方图/散点图
+ENABLE_SAVE_IMAGES="${ENABLE_SAVE_IMAGES:-1}" # 中间过程图（hull/hex 等）
+
+# ── 几何分析调参 ─────────────────────────────────────────────────────────────
+GEOM_WORKERS="${GEOM_WORKERS:-8}"            # 并行线程数
+SCATTER_METRIC="${SCATTER_METRIC:-mae}"      # 散点图标题指标: mae / r2 / both
+export BL_MASK_ALPHA=70
+# ── 物理尺度换算（可选）───────────────────────────────────────────────────────
+SCALE_RATIO="${SCALE_RATIO:-}"               # μm/px 等比例
+SCALE_UNIT="${SCALE_UNIT:-}"                 # 单位名称
 
 run_compare() {
     local split_name="$1"
@@ -37,13 +81,26 @@ run_compare() {
         --ann-file "${ann_file}"
         --img-dir "${img_dir}"
         --out-dir "${out_dir}"
-        --model-cfg postprocess/test_list.yaml
+        --model-cfg postprocess/model_list.yaml
         --model-root "${MODEL_ROOT}"
         --score-thresh "${SCORE_THRESH}"
-        --enable-poly-metrics
-        --enable-gt
         --device cuda:0
     )
+
+    # ── 功能开关 ──
+    [[ "${ENABLE_POLY_METRICS}" == "1" ]] && compare_args+=(--enable-poly-metrics)
+    [[ "${ENABLE_GT}" == "1" ]]          && compare_args+=(--enable-gt)
+    [[ "${ENABLE_GT_MATCHING}" == "1" ]] && compare_args+=(--enable-gt-matching)
+    [[ "${ENABLE_PLOTS}" == "1" ]]       && compare_args+=(--enable-plots)
+    [[ "${ENABLE_SAVE_IMAGES}" == "1" ]] && compare_args+=(--enable-save-images)
+
+    # ── 几何分析参数 ──
+    [[ -n "${GEOM_WORKERS}" ]]   && compare_args+=(--geom-workers "${GEOM_WORKERS}")
+    [[ -n "${SCATTER_METRIC}" ]] && compare_args+=(--scatter-metric "${SCATTER_METRIC}")
+
+    # ── 物理尺度 ──
+    [[ -n "${SCALE_RATIO}" ]] && compare_args+=(--scale-ratio "${SCALE_RATIO}")
+    [[ -n "${SCALE_UNIT}" ]]  && compare_args+=(--scale-unit "${SCALE_UNIT}")
 
     if [[ -n "${CHECKPOINT_EPOCH}" ]]; then
         compare_args+=(--checkpoint-epoch "${CHECKPOINT_EPOCH}")
@@ -62,7 +119,12 @@ run_compare() {
 }
 
 # 20x / 50x / 100x: 非滑窗预测
-
+run_compare \
+    "20x" \
+    "dataset_root/mmdata_test_1024/annotations/instances_20x.json" \
+    "dataset_root/mmdata_test_1024/images/20x" \
+    "plain"
+'''
 run_compare \
     "sr2_5x_unsup" \
     "dataset_root/test_set_1024/annotations/instances_sr2_5x_unsup.json" \
@@ -70,12 +132,8 @@ run_compare \
     "sliding"
     
     
-'''
-run_compare \
-    "20x" \
-    "dataset_root/test_set_1024/annotations/instances_20x.json" \
-    "dataset_root/test_set_1024/images/20x" \
-    "plain"
+
+
 
 run_compare \
     "50x" \
@@ -88,7 +146,7 @@ run_compare \
     "dataset_root/test_set_1024/annotations/instances_100x.json" \
     "dataset_root/test_set_1024/images/100x" \
     "plain"
-'''
+
 # 2_5x / 5x: 同时跑非滑窗和滑窗预测
 run_compare \
     "2_5x_unsup" \
@@ -109,5 +167,5 @@ run_compare \
     "dataset_root/test_set_1024/annotations/instances_5x_unsup.json" \
     "dataset_root/test_set_1024/images/5x_unsup" \
     "sliding"
-
+'''
 echo "===== 完成 ====="

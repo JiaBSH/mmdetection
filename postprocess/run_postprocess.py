@@ -59,6 +59,7 @@ from postprocess.analyze_main_dy2 import (  # noqa: E402
 from postprocess.sliding_window_infer import (  # noqa: E402
     infer_image_with_overlap_windows,
 )
+from postprocess._shared import _to_numpy, _build_overlay
 
 # ---------------------------------------------------------------------------
 # 推理单张图（MMDetection inference API）
@@ -90,15 +91,6 @@ def _pred_instances_to_global_instances(
     else:
         masks_np = np.asarray(masks, dtype=bool)
 
-    def _to_numpy(t):
-        if t is None:
-            return None
-        if hasattr(t, "cpu"):
-            t = t.cpu()
-        if hasattr(t, "numpy"):
-            return t.numpy()
-        return np.asarray(t)
-
     return mmdet_masks_to_instances(
         masks_np,
         scores=_to_numpy(scores),
@@ -124,10 +116,14 @@ def _infer_one_image(
 ) -> tuple[list[dict], Image.Image, list[dict], list[dict]]:
     """推理单张图，返回 (global_instances, PIL_image_RGB)。"""
     from mmdet.apis import inference_detector  # type: ignore
+    import numpy as np
     pil_img = Image.open(img_path).convert("RGB")
 
     if not sliding_window:
-        result = inference_detector(model, img_path)
+        # Pass as numpy array to use LoadImageFromNDArray path consistently
+        # (avoids pipeline type mismatch between file-path and array inference)
+        img_np = np.asarray(pil_img)
+        result = inference_detector(model, img_np)
         instances = _pred_instances_to_global_instances(
             result.pred_instances,
             score_thresh=score_thresh,
@@ -152,30 +148,6 @@ def _infer_one_image(
 # ---------------------------------------------------------------------------
 # 构建彩色实例overlay（与 temp 管道一致）
 # ---------------------------------------------------------------------------
-
-def _build_overlay(pil_img: Image.Image, instances: list[dict]) -> Image.Image:
-    """将实例masks叠加到原图上，返回RGBA PIL Image。"""
-    import random
-
-    W, H = pil_img.size
-    base = pil_img.convert("RGBA")
-
-    color_mask = np.zeros((H, W, 4), dtype=np.uint8)
-    for inst in instances:
-        coords = inst.get("coords")
-        if coords is None or len(coords) == 0:
-            continue
-        inst_id = int(inst.get("id", 1))
-        random.seed(inst_id)
-        r, g, b = [random.randint(50, 255) for _ in range(3)]
-        ys = coords[:, 0].astype(np.int64)
-        xs = coords[:, 1].astype(np.int64)
-        vm = (ys >= 0) & (ys < H) & (xs >= 0) & (xs < W)
-        color_mask[ys[vm], xs[vm]] = [r, g, b, 150]
-
-    overlay_img = Image.fromarray(color_mask, mode="RGBA")
-    return Image.alpha_composite(base, overlay_img)
-
 
 def _save_sliding_window_visualization(
     overlayed: Image.Image,
@@ -300,8 +272,17 @@ def process_one_image(
     patch_overlap_ratio: float = 0.0,
     batch_size: int = 1,
     verbose: bool = True,
+    coco_collector=None,    # COCOResultCollector | None
+    image_id: int | None = None,
 ) -> dict:
     """对单张图推理并做几何分析，返回指标dict。
+
+    Parameters
+    ----------
+    coco_collector : COCOResultCollector | None
+        若提供，推理后将预测结果以 COCO 格式收集到该对象中。
+    image_id : int | None
+        COCO annotation 中的 image_id（与 coco_collector 配合使用）。
 
     Returns
     -------
@@ -350,8 +331,21 @@ def process_one_image(
     if verbose:
         print(f"  Predicted instances: {len(instances)}")
 
+    # 1.5) COCO 预测收集
+    if coco_collector is not None and image_id is not None:
+        try:
+            coco_collector.add_image_predictions(
+                image_id=image_id,
+                global_instances=instances,
+                img_width=pil_img.width,
+                img_height=pil_img.height,
+            )
+        except Exception:
+            pass  # COCO 收集失败不影响主流程
+
     # 2) 构建overlay
-    overlayed = _build_overlay(pil_img, instances)
+    mask_alpha = int(os.getenv("BL_MASK_ALPHA", "160"))
+    overlayed = _build_overlay(pil_img, instances, mask_alpha=mask_alpha)
     if sliding_window:
         try:
             _save_sliding_window_visualization(
@@ -493,6 +487,13 @@ def analyze_domain_geometry_coco(
 
 def _load_model(config: str, checkpoint: str, device: str = "cuda:0"):
     """加载MMDetection模型。"""
+    import torch
+    # PyTorch 2.6+ defaults to weights_only=True, breaking mmdet checkpoints
+    _orig_load = torch.load
+    def _patched_load(*args, **kwargs):
+        kwargs.setdefault('weights_only', False)
+        return _orig_load(*args, **kwargs)
+    torch.load = _patched_load
     from mmdet.apis import init_detector  # type: ignore
     return init_detector(config, checkpoint, device=device)
 
@@ -551,14 +552,11 @@ def main(argv: list[str] | None = None) -> int:
                    help="物理单位名称（如 nm）")
     args = p.parse_args(argv)
 
-    # 环境变量同步（与 temp 管道一致）
-    if args.enable_plots:
-        os.environ["BL_GEOM_PLOTS"] = "1"
-    if args.enable_gt:
-        os.environ["BL_GEOM_GT"] = "1"
-        os.environ["BL_GEOM_GT_MATCH"] = "1"
-    if args.enable_poly_metrics:
-        os.environ["BL_GEOM_POLY_METRICS"] = "1"
+    # 环境变量同步：显式设置 0/1，确保底层 _env_flag 读到正确的值
+    os.environ["BL_GEOM_PLOTS"] = "1" if args.enable_plots else "0"
+    os.environ["BL_GEOM_GT"] = "1" if args.enable_gt else "0"
+    os.environ["BL_GEOM_GT_MATCH"] = "1" if args.enable_gt else "0"
+    os.environ["BL_GEOM_POLY_METRICS"] = "1" if args.enable_poly_metrics else "0"
 
     # 加载模型
     print(f"Loading model: {args.config}")
@@ -594,9 +592,9 @@ def main(argv: list[str] | None = None) -> int:
                 min_pixel_count=args.min_pixels,
                 scale_ratio=args.scale_ratio,
                 scale_unit=args.scale_unit,
-                enable_plots=True if args.enable_plots else None,
-                enable_gt=True if args.enable_gt else None,
-                enable_polygon_metrics=True if args.enable_poly_metrics else None,
+                enable_plots=args.enable_plots,
+                enable_gt=args.enable_gt,
+                enable_polygon_metrics=args.enable_poly_metrics,
                 device=args.device,
                 sliding_window=args.sliding_window,
                 patch_size=args.patch_size,

@@ -28,8 +28,8 @@ from matplotlib.patches import Polygon as MplPoly
 from matplotlib.collections import PatchCollection
 
 # ── Configuration ─────────────────────────────────────────────────────────────
-SRC_ROOT   = "/hpcfs/fhome/sunxc/JiaBSH/mmdetection/dataset_root/dataset_1024"
-DST_ROOT   = "/hpcfs/fhome/sunxc/JiaBSH/mmdetection/dataset_root/dataset_1024_aug"
+SRC_ROOT   = "dataset_root/mmdata_isat_1024"
+DST_ROOT   = "dataset_root/mmdata_isat_1024_aug"
 VIS_DIR    = os.path.join(DST_ROOT, "visualizations")
 
 AUG_FACTOR          = 4      # augmented copies per original image

@@ -14,14 +14,14 @@ backend_args = None
 train_pipeline = [
     dict(type='LoadImageFromFile', backend_args=backend_args),
     dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
-    dict(type='Resize', scale=(512, 512), keep_ratio=True),
+    dict(type='Resize', scale=(1024, 1024), keep_ratio=True),
     dict(type='RandomFlip', prob=0.5),
     dict(type='PackDetInputs')
 ]
 
 test_pipeline = [
     dict(type='LoadImageFromFile', backend_args=backend_args),
-    dict(type='Resize', scale=(512, 512), keep_ratio=True),
+    dict(type='Resize', scale=(1024, 1024), keep_ratio=True),
     dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
     dict(
         type='PackDetInputs',
@@ -30,9 +30,9 @@ test_pipeline = [
 ]
 
 train_dataloader = dict(
-    batch_size=2,
-    num_workers=2,
-    persistent_workers=True,
+    batch_size=1,
+    num_workers=1,
+    persistent_workers=False,
     sampler=dict(type='DefaultSampler', shuffle=True),
     batch_sampler=dict(type='AspectRatioBatchSampler'),
     dataset=dict(
@@ -47,8 +47,8 @@ train_dataloader = dict(
 
 val_dataloader = dict(
     batch_size=1,
-    num_workers=2,
-    persistent_workers=True,
+    num_workers=1,
+    persistent_workers=False,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(
@@ -63,8 +63,8 @@ val_dataloader = dict(
 
 test_dataloader =  dict(
     batch_size=1,
-    num_workers=2,
-    persistent_workers=True,
+    num_workers=1,
+    persistent_workers=False,
     drop_last=False,
     sampler=dict(type='DefaultSampler', shuffle=False),
     dataset=dict(

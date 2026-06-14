@@ -16,6 +16,9 @@ GEOMETRY_METRICS = [
     'EdgeAngle',
 ]
 
+# 逐实例指标（matched_metrics.csv 中单值列，非 gt_X/pred_X 配对列）
+INSTANCE_METRICS = ['IoU', 'Precision', 'Recall', 'F1', 'Centroid_Distance']
+
 AVERAGE_METRICS = ['iou', 'precision', 'recall', 'f1']
 SUMMARY_FIELDNAMES = [
     'model',
@@ -26,6 +29,7 @@ SUMMARY_FIELDNAMES = [
     'count_mae',
     'coverage_mae',
     *[f'{metric}_mae' for metric in GEOMETRY_METRICS],
+    *[f'instance_{metric.lower()}_mean' for metric in INSTANCE_METRICS],
 ]
 
 
@@ -96,6 +100,24 @@ def compute_geometry_mae(matched_csv: Path) -> dict[str, float | None]:
     return {f'{metric}_mae': mean(metric_diffs[metric]) for metric in GEOMETRY_METRICS}
 
 
+def compute_instance_metric_means(matched_csv: Path) -> dict[str, float | None]:
+    """从 matched_metrics_merged.csv 读取逐实例指标，计算跨所有匹配对的均值。"""
+    metric_values: dict[str, list[float]] = {m: [] for m in INSTANCE_METRICS}
+
+    with matched_csv.open('r', newline='', encoding='utf-8-sig') as csv_file:
+        reader = csv.DictReader(csv_file)
+        for row in reader:
+            for metric in INSTANCE_METRICS:
+                value = to_float(row.get(metric, ''))
+                if value is not None:
+                    metric_values[metric].append(value)
+
+    return {
+        f'instance_{metric.lower()}_mean': mean(metric_values[metric])
+        for metric in INSTANCE_METRICS
+    }
+
+
 def compute_summary_metrics(summary_csv: Path) -> dict[str, float | None]:
     averages: dict[str, list[float]] = {metric: [] for metric in AVERAGE_METRICS}
     count_abs_errors: list[float] = []
@@ -152,9 +174,12 @@ def summarize_model_dir(
     matched_csv = model_dir / matched_name
     if matched_csv.is_file():
         row.update(compute_geometry_mae(matched_csv))
+        row.update(compute_instance_metric_means(matched_csv))
     else:
         for metric in GEOMETRY_METRICS:
             row[f'{metric}_mae'] = None
+        for metric in INSTANCE_METRICS:
+            row[f'instance_{metric.lower()}_mean'] = None
 
     return row
 

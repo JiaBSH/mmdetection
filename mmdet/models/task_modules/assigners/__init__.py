@@ -11,6 +11,7 @@ from .iou2d_calculator import BboxOverlaps2D, BboxOverlaps2D_GLIP
 from .match_cost import (BBoxL1Cost, BinaryFocalLossCost, ClassificationCost,
                          CrossEntropyLossCost, DiceCost, FocalLossCost,
                          IoUCost)
+from .chunked_max_iou_assigner import ChunkedMaxIoUAssigner
 from .max_iou_assigner import MaxIoUAssigner
 from .multi_instance_assigner import MultiInstanceAssigner
 from .point_assigner import PointAssigner
@@ -22,6 +23,7 @@ from .uniform_assigner import UniformAssigner
 
 __all__ = [
     'BaseAssigner', 'BinaryFocalLossCost', 'MaxIoUAssigner',
+    'ChunkedMaxIoUAssigner',
     'ApproxMaxIoUAssigner', 'AssignResult', 'PointAssigner', 'ATSSAssigner',
     'CenterRegionAssigner', 'GridAssigner', 'HungarianAssigner',
     'RegionAssigner', 'UniformAssigner', 'SimOTAAssigner',

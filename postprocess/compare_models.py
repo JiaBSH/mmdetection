@@ -160,6 +160,19 @@ def _load_postprocess_runtime():
 
     return _get_test_images, _load_model, process_one_image
 
+
+def _build_image_id_map(ann_file: str) -> dict[str, int]:
+    """从 COCO annotation 文件建立 filename → image_id 映射。"""
+    with open(ann_file, "r", encoding="utf-8") as f:
+        coco = json.load(f)
+    id_map: dict[str, int] = {}
+    for img_info in coco.get("images", []):
+        fn = img_info.get("file_name", "")
+        base = os.path.basename(fn)
+        id_map[base] = img_info["id"]
+    return id_map
+
+
 def evaluate_model(
     model_name: str,
     config: str,
@@ -181,8 +194,16 @@ def evaluate_model(
     patch_overlap_ratio: float = 0.0,
     batch_size: int = 1,
     verbose: bool = True,
-) -> list[dict]:
-    """对一个模型评估所有测试图，返回每张图的指标rows。"""
+) -> tuple[list[dict], dict[str, float]]:
+    """对一个模型评估所有测试图，返回 (指标rows, COCO指标)。
+
+    Returns
+    -------
+    list[dict] — 每张图的指标行
+    dict[str, float] — COCO AP 指标（bbox_mAP, segm_mAP 等），失败时为空
+    """
+    from postprocess._coco_eval import COCOResultCollector, evaluate_coco_from_predictions
+
     _, _load_model, process_one_image = _load_postprocess_runtime()
     model_out_dir = os.path.join(out_dir, model_name)
     os.makedirs(model_out_dir, exist_ok=True)
@@ -195,10 +216,15 @@ def evaluate_model(
 
     model = _load_model(config, checkpoint, device=device)
 
+    # 建立 COCO image_id 映射 + 收集器
+    image_id_map = _build_image_id_map(ann_file)
+    coco_collector = COCOResultCollector()
+
     rows: list[dict] = []
     for img_path, img_name in img_list:
         stem = os.path.splitext(img_name)[0]
         out_dir_i = os.path.join(model_out_dir, stem)
+        img_id = image_id_map.get(img_name)
         try:
             row = process_one_image(
                 model,
@@ -210,15 +236,17 @@ def evaluate_model(
                 min_pixel_count=min_pixel_count,
                 scale_ratio=scale_ratio,
                 scale_unit=scale_unit,
-                enable_plots=True if enable_plots else None,
-                enable_gt=True if enable_gt else None,
-                enable_polygon_metrics=True if enable_polygon_metrics else None,
+                enable_plots=enable_plots,
+                enable_gt=enable_gt,
+                enable_polygon_metrics=enable_polygon_metrics,
                 device=device,
                 sliding_window=sliding_window,
                 patch_size=patch_size,
                 patch_overlap_ratio=patch_overlap_ratio,
                 batch_size=batch_size,
                 verbose=verbose,
+                coco_collector=coco_collector,
+                image_id=img_id,
             )
         except Exception:
             traceback.print_exc()
@@ -249,7 +277,28 @@ def evaluate_model(
     else:
         print(f"\n⚠️ {model_name}: 无有效指标")
 
-    return rows
+    # COCO 评估
+    coco_metrics: dict[str, float] = {}
+    if len(coco_collector) > 0:
+        try:
+            print(f"\n📐 COCO 评估: {model_name} ({len(coco_collector)} predictions)")
+            coco_metrics = evaluate_coco_from_predictions(
+                coco_collector.to_coco_list(),
+                ann_file,
+                metrics=["bbox", "segm"],
+            )
+            # 保存
+            coco_json_path = os.path.join(model_out_dir, "coco_metrics.json")
+            os.makedirs(os.path.dirname(coco_json_path), exist_ok=True)
+            with open(coco_json_path, "w", encoding="utf-8") as f:
+                json.dump(coco_metrics, f, ensure_ascii=False, indent=2)
+            print(f"  ✅ COCO metrics: {coco_json_path}")
+            for key in sorted(coco_metrics):
+                print(f"     {key}: {coco_metrics[key]:.4f}")
+        except Exception:
+            print(f"  ⚠️ COCO 评估失败: {traceback.format_exc()}")
+
+    return rows, coco_metrics
 
 
 # ---------------------------------------------------------------------------
@@ -266,27 +315,46 @@ def write_comparison_csv(all_rows: list[dict], out_path: str) -> None:
         writer.writerows(all_rows)
 
 
-def write_mean_comparison_csv(all_rows: list[dict], out_path: str) -> None:
-    """每个模型的各指标均值汇总。"""
+COCO_METRIC_KEYS = [
+    "bbox_mAP", "bbox_mAP_50", "bbox_mAP_75",
+    "bbox_mAP_s", "bbox_mAP_m", "bbox_mAP_l",
+    "segm_mAP", "segm_mAP_50", "segm_mAP_75",
+    "segm_mAP_s", "segm_mAP_m", "segm_mAP_l",
+]
+
+
+def write_mean_comparison_csv(
+    all_rows: list[dict],
+    out_path: str,
+    coco_metrics: dict[str, dict[str, float]] | None = None,
+) -> None:
+    """每个模型的各指标均值汇总，含 COCO AP。"""
     from collections import defaultdict
 
     model_rows: dict[str, list[dict]] = defaultdict(list)
     for row in all_rows:
         model_rows[row["model"]].append(row)
 
-    metrics = ["iou", "precision", "recall", "f1", "pred_count", "gt_count",
-               "pred_coverage", "gt_coverage"]
+    pixel_metrics = ["iou", "precision", "recall", "f1", "pred_count", "gt_count",
+                     "pred_coverage", "gt_coverage"]
+    fieldnames = ["model"] + pixel_metrics + COCO_METRIC_KEYS
+
+    coco = coco_metrics or {}
 
     with open(out_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["model"] + metrics)
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for model_name, rows in sorted(model_rows.items()):
             mean_row = {"model": model_name}
-            for m in metrics:
+            for m in pixel_metrics:
                 vals = [r[m] for r in rows if np.isfinite(r.get(m, float("nan")))]
                 mean_row[m] = float(np.mean(vals)) if vals else float("nan")
+            # 填入 COCO 指标
+            for key in COCO_METRIC_KEYS:
+                mean_row[key] = coco.get(model_name, {}).get(key, float("nan"))
             writer.writerow(mean_row)
-            print(f"  {model_name}: IoU={mean_row['iou']:.4f}  F1={mean_row['f1']:.4f}")
+            coco_str = f" segm_mAP={mean_row.get('segm_mAP', 'nan')}" if mean_row.get('segm_mAP') is not None else ""
+            print(f"  {model_name}: IoU={mean_row['iou']:.4f}  F1={mean_row['f1']:.4f}{coco_str}")
 
 
 def plot_comparison(mean_csv: str, out_dir: str) -> None:
@@ -393,20 +461,31 @@ def main(argv: list[str] | None = None) -> int:
                    help="滑窗推理 batch size")
     p.add_argument("--enable-plots",       action="store_true", default=False)
     p.add_argument("--enable-gt",          action="store_true", default=False)
+    p.add_argument("--enable-gt-matching",  action="store_true", default=False,
+                   help="开启 GT↔Pred 匹配（需要 --enable-gt）")
+    p.add_argument("--enable-save-images",  action="store_true", default=False,
+                   help="保存中间过程图片（hull/hex/边缘角度可视化等）")
     p.add_argument("--enable-poly-metrics", action="store_true", default=False)
+    p.add_argument("--geom-workers", type=int, default=None,
+                   help="几何分析并行线程数（默认自动检测）")
+    p.add_argument("--scatter-metric", default=None,
+                   choices=["mae", "r2", "both"],
+                   help="GT↔Pred 散点图标题指标: mae, r2, both（默认 mae）")
     p.add_argument("--scale-ratio", type=float, default=None)
     p.add_argument("--scale-unit",  default=None)
     args = p.parse_args(argv)
     _get_test_images, _, _ = _load_postprocess_runtime()
 
-    # 环境变量设置
-    if args.enable_plots:
-        os.environ["BL_GEOM_PLOTS"] = "1"
-    if args.enable_gt:
-        os.environ["BL_GEOM_GT"] = "1"
-        os.environ["BL_GEOM_GT_MATCH"] = "1"
-    if args.enable_poly_metrics:
-        os.environ["BL_GEOM_POLY_METRICS"] = "1"
+    # 环境变量同步：显式设置 0/1，确保底层 _env_flag 读到正确的值
+    os.environ["BL_GEOM_PLOTS"] = "1" if args.enable_plots else "0"
+    os.environ["BL_GEOM_GT"] = "1" if args.enable_gt else "0"
+    os.environ["BL_GEOM_GT_MATCH"] = "1" if args.enable_gt_matching else "0"
+    os.environ["BL_GEOM_POLY_METRICS"] = "1" if args.enable_poly_metrics else "0"
+    os.environ["BL_GEOM_SAVE_IMAGES"] = "1" if args.enable_save_images else "0"
+    if args.geom_workers is not None and args.geom_workers > 0:
+        os.environ["BL_GEOM_WORKERS"] = str(args.geom_workers)
+    if args.scatter_metric is not None:
+        os.environ["BL_GEOM_SCATTER_METRIC"] = args.scatter_metric
 
     # 解析模型列表
     model_specs: list[tuple[str, str, str]] = []
@@ -434,10 +513,11 @@ def main(argv: list[str] | None = None) -> int:
 
     os.makedirs(args.out_dir, exist_ok=True)
     all_rows: list[dict] = []
+    all_coco_metrics: dict[str, dict[str, float]] = {}  # model_name → coco_metrics
 
     for model_name, config, checkpoint in model_specs:
         try:
-            rows = evaluate_model(
+            rows, coco_metrics = evaluate_model(
                 model_name,
                 config,
                 checkpoint,
@@ -458,6 +538,8 @@ def main(argv: list[str] | None = None) -> int:
                 batch_size=args.batch_size,
             )
             all_rows.extend(rows)
+            if coco_metrics:
+                all_coco_metrics[model_name] = coco_metrics
         except Exception:
             traceback.print_exc()
             print(f"❌ 模型 {model_name} 评估失败，跳过")
@@ -473,7 +555,7 @@ def main(argv: list[str] | None = None) -> int:
 
     mean_csv = os.path.join(args.out_dir, "comparison_mean.csv")
     print("\n📊 各模型均值:")
-    write_mean_comparison_csv(all_rows, mean_csv)
+    write_mean_comparison_csv(all_rows, mean_csv, coco_metrics=all_coco_metrics)
     print(f"✅ 均值对比CSV: {mean_csv}")
 
     plot_comparison(mean_csv, args.out_dir)

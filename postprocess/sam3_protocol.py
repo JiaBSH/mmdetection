@@ -10,6 +10,7 @@ from PIL import Image
 
 from postprocess.analyze_main_dy2 import analyze_domain_geometry
 from postprocess.coco_utils import load_isat_instances
+from postprocess._shared import _build_overlay
 
 
 def _set_bool_env(name: str, enabled: bool) -> None:
@@ -30,29 +31,6 @@ def _configure_analysis_env(
     _set_bool_env("BL_GEOM_POLY_METRICS", enable_polygon_metrics)
     _set_bool_env("BL_GEOM_SAVE_IMAGES", enable_save_images)
     os.environ["BL_GEOM_BOUNDARY_MARGIN"] = str(int(boundary_margin))
-
-
-def _build_overlay(pil_img: Image.Image, instances: list[dict]) -> Image.Image:
-    import random
-
-    width, height = pil_img.size
-    base = pil_img.convert("RGBA")
-    color_mask = np.zeros((height, width, 4), dtype=np.uint8)
-
-    for inst in instances:
-        coords = inst.get("coords")
-        if coords is None or len(coords) == 0:
-            continue
-        inst_id = int(inst.get("id", 1))
-        random.seed(inst_id)
-        r, g, b = [random.randint(50, 255) for _ in range(3)]
-        ys = coords[:, 0].astype(np.int64)
-        xs = coords[:, 1].astype(np.int64)
-        valid = (ys >= 0) & (ys < height) & (xs >= 0) & (xs < width)
-        color_mask[ys[valid], xs[valid]] = [r, g, b, 150]
-
-    overlay_img = Image.fromarray(color_mask, mode="RGBA")
-    return Image.alpha_composite(base, overlay_img)
 
 
 def _pick_metric(values, idx: int = 1) -> float:

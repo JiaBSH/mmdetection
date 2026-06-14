@@ -3,7 +3,12 @@
     "allow": [
       "Bash(nvidia-smi)",
       "Bash(conda info *)",
-      "Read(//hpcfs/fpublic/app/miniforge3/conda/etc/profile.d/**)"
+      "Read(//hpcfs/fpublic/app/miniforge3/conda/etc/profile.d/**)",
+      "Bash(curl *)",
+      "WebSearch",
+      "Bash(python3 -c ' *)",
+      "Bash(srun --gpus=1 *)",
+      "Bash(squeue -j 157015)"
     ]
   }
 }
