@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=isat_a_overlap
+#SBATCH --job-name=syn_ro
 #SBATCH -p gpu
 #SBATCH -N 1
 #SBATCH --gres=gpu:1
@@ -60,10 +60,10 @@ mkdir -p "$TORCH_HOME" logs
 
 # ── Training parameters ──────────────────────────────────────────────────────
 # Exposed so you can tweak them at the SBATCH/env level without editing submm.py.
-export CONFIG_DIR="${CONFIG_DIR:-configs/custom_overlap}"
+export CONFIG_DIR="${CONFIG_DIR:-configs/custom}"
 #export DATA_ROOT="${DATA_ROOT:-data/syn_multimag/adaptive_patches_jitt/}"
 #export WORK_DIR_ROOT="${WORK_DIR_ROOT:-work_dirs/run_$(date +%Y%m%d_%H%M%S)}"
-export WORK_DIR_ROOT="${WORK_DIR_ROOT:-work_dirs/run_isat_aug_overlap}"
+export WORK_DIR_ROOT="${WORK_DIR_ROOT:-work_dirs/run_syn_rotation}"
 export NUM_GPUS="${NUM_GPUS:-1}"
 export TEST_MAX_EPOCHS="${TEST_MAX_EPOCHS:-100}"
 export TEST_TRAIN_BATCH_SIZE="${TEST_TRAIN_BATCH_SIZE:-2}"
@@ -80,7 +80,7 @@ export EARLY_STOP_THRESHOLD="${EARLY_STOP_THRESHOLD:-}"
 
 # ── Ramdisk — extract dataset to /dev/shm for low-latency I/O ────────────────
 USE_RAMDISK="${USE_RAMDISK:-1}"
-RAMDISK_TAR="${RAMDISK_TAR:-dataset_root/mmdata_isat_1024_aug.tar}"
+RAMDISK_TAR="${RAMDISK_TAR:-data/syn_multimag/adaptive_patches_rotation.tar}"
 RAMDISK_CLEAN="${RAMDISK_CLEAN:-1}"
 
 RAMDISK_DIR=""  # set after extraction

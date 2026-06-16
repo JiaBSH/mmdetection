@@ -35,8 +35,8 @@ MAG_WINDOW = {
     '100x': 10240,
 }
 
-COCO_ROOT = './data/syn_multimag/coco'
-OUTPUT_ROOT = './data/syn_multimag/adaptive_patches'
+COCO_ROOT = './data/syn_multimag/coco_rotation'
+OUTPUT_ROOT = './data/syn_multimag/adaptive_patches_rotation'
 CATEGORY_ID = 1
 
 

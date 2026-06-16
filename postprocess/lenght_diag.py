@@ -29,7 +29,7 @@ def lenght_diag_reg(all_hexagons, base_img, save_dir, scale_ratio=None, unit='px
         length = np.linalg.norm(p1 - p2)
         diag_lens.append(length * scale)
         if draw2 is not None:
-            draw2.line([tuple(p1[::-1]), tuple(p2[::-1])], fill="#fbb03b", width=16)
+            draw2.line([tuple(p1[::-1]), tuple(p2[::-1])], fill="#fbb03b", width=2)
     if img2 is not None:
         img2.save(os.path.join(save_dir, "length_diag.png"))
     if save_hist:

@@ -13,14 +13,14 @@ import shutil
 import cv2
 import numpy as np
 
-RAW_ROOT = "./data/syn_multimag/raw"
-COCO_ROOT = "./data/syn_multimag/coco"
+RAW_ROOT = "./data/syn_multimag/raw_rotation"
+COCO_ROOT = "./data/syn_multimag/coco_rotation"
 
 MAG_LABELS = ["2.5x", "5x", "20x", "50x", "100x"]
 
-TRAIN_PER_MAG = 50
-VAL_PER_MAG = 20
-TEST_PER_MAG = 30  # 50+20+30 = 100
+TRAIN_PER_MAG = 12
+VAL_PER_MAG = 4
+TEST_PER_MAG = 4  # 50+20+30 = 100
 
 CATEGORY_ID = 1
 CATEGORY_NAME = "畴区"

@@ -59,11 +59,11 @@ def diaglen_edgeangle_overlay(
     *,
     save_name: str = "length_diag_edge_angle.png",
     outline_color: str = "orange",
-    outline_width: int = 8,
+    outline_width: int = 2,
     diag_color: str = "#fbb03b",
-    diag_width: int = 8,
+    diag_width: int = 2,
     edge_color: str = "#0000ff",
-    edge_width: int = 8,
+    edge_width: int = 2,
 ) -> "str | None":
     """Draw DiagonalLength and EdgeAngle overlays on ONE image.
 

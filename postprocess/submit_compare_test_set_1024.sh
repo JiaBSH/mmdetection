@@ -42,9 +42,9 @@ cd /data/home/scvi576/run/JiaBSH/mmdetection_para
 echo "===== test_set_1024 多模型测评 ====="
 
 # ── 基本路径 ──────────────────────────────────────────────────────────────────
-MODEL_ROOT="${MODEL_ROOT:-work_dirs/run_isat_aug}"
+MODEL_ROOT="${MODEL_ROOT:-work_dirs/run_syn_rotation}"
 CHECKPOINT_EPOCH="${CHECKPOINT_EPOCH:-}"
-OUT_ROOT="${OUT_ROOT:-outputs/run_isat_aug}"
+OUT_ROOT="${OUT_ROOT:-outputs/run_syn_rotation}"
 
 # ── 滑窗/推理参数 ────────────────────────────────────────────────────────────
 PATCH_SIZE="${PATCH_SIZE:-512}"
@@ -61,7 +61,7 @@ ENABLE_SAVE_IMAGES="${ENABLE_SAVE_IMAGES:-1}" # 中间过程图（hull/hex 等�
 
 # ── 几何分析调参 ─────────────────────────────────────────────────────────────
 GEOM_WORKERS="${GEOM_WORKERS:-8}"            # 并行线程数
-SCATTER_METRIC="${SCATTER_METRIC:-mae}"      # 散点图标题指标: mae / r2 / both
+SCATTER_METRIC="${SCATTER_METRIC:-both}"      # 散点图标题指标: mae / r2 / both
 export BL_MASK_ALPHA=70
 # ── 物理尺度换算（可选）───────────────────────────────────────────────────────
 SCALE_RATIO="${SCALE_RATIO:-}"               # μm/px 等比例
@@ -117,20 +117,26 @@ run_compare() {
 
     python postprocess/compare_models.py "${compare_args[@]}"
 }
+run_compare \
+    "5x_unsup" \
+    "data/syn_multimag/coco_rotation/test5_t1/instances_test.json" \
+    "data/syn_multimag/coco_rotation/test5_t1/images" \
+    "sliding"
+'''
+run_compare \
+    "2_5x_rotation" \
+    "data/syn_multimag/coco_rotation/test2_5_t1/instances_test.json" \
+    "data/syn_multimag/coco_rotation/test2_5_t1/images" \
+    "sliding"
 
-# 20x / 50x / 100x: 非滑窗预测
+
+
+    # 20x / 50x / 100x: 非滑窗预测
 run_compare \
     "20x" \
     "dataset_root/mmdata_test_1024/annotations/instances_20x.json" \
     "dataset_root/mmdata_test_1024/images/20x" \
     "plain"
-'''
-run_compare \
-    "sr2_5x_unsup" \
-    "dataset_root/test_set_1024/annotations/instances_sr2_5x_unsup.json" \
-    "dataset_root/test_set_1024/images/sr2_5x_unsup" \
-    "sliding"
-    
     
 
 

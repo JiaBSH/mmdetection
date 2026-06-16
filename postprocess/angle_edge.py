@@ -89,7 +89,7 @@ def angle_edge_reg(all_hexagons,  base_img, save_dir, *, save_images: bool = Tru
         edge_angles.append(angle)
         #draw4.line([tuple(p1[::-1]), tuple(p2[::-1])], fill="purple", width=3)
         if draw4 is not None:
-            _draw_arrow(draw4, tuple(p1[::-1]), tuple(p2[::-1]), color="#0000ff", width=16)
+            _draw_arrow(draw4, tuple(p1[::-1]), tuple(p2[::-1]), color="#0000ff", width=2)
     
     if img4 is not None:
         img4.save(os.path.join(save_dir, "angle_edge.png"))

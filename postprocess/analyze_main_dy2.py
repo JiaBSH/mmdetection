@@ -420,7 +420,7 @@ def analyze_domain_geometry(
             print("⚠️ BL_ONLY_PRED_VS_GT_IOU=1 but gt_json_path missing; skip")
             return [], [], [], [], len(global_instances), 0, None, None
 
-        image_size = (overlayed.height, overlayed.width)
+        image_size = (overlayed.width, overlayed.height)
         # Use contour extraction (same as existing "原始预测 vs GT" behavior)
         with _timer('Compute ex_c() for pred polygons'):
             ex_coor = ex_c(global_instances)
@@ -1603,7 +1603,7 @@ def analyze_domain_geometry(
     # 原始预测多边形
     all_pred_polygons = [inst["coords"] for inst in global_instances if len(inst["coords"]) >= 3]
 
-    image_size = (overlayed.height, overlayed.width)
+    image_size = (overlayed.width, overlayed.height)
 
     # ---------- 三组比较 ----------
     summary = []
