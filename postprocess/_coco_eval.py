@@ -148,9 +148,15 @@ def evaluate_coco_from_predictions(
     coco_gt = COCO(ann_file)
     coco_dt = coco_gt.loadRes(coco_predictions)
 
+    # 只评估有预测的图像（避免未提供图片的 GT 拉低指标）
+    pred_img_ids = list(coco_dt.imgToAnns.keys())
+    if not pred_img_ids:
+        return {}
+
     results: dict[str, float] = {}
     for metric in metrics:
         coco_eval = COCOeval(coco_gt, coco_dt, metric)
+        coco_eval.params.imgIds = pred_img_ids  # 限定评估范围
         coco_eval.evaluate()
         coco_eval.accumulate()
         coco_eval.summarize()
