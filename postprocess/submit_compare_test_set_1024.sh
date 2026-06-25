@@ -44,13 +44,14 @@ echo "===== test_set_1024 多模型测评 ====="
 # ── 基本路径 ──────────────────────────────────────────────────────────────────
 MODEL_ROOT="${MODEL_ROOT:-work_dirs/run_syn_rotation}"
 CHECKPOINT_EPOCH="${CHECKPOINT_EPOCH:-}"
-OUT_ROOT="${OUT_ROOT:-outputs/run_syn_rotation}"
+OUT_ROOT="${OUT_ROOT:-outputs/run_syn_rotation_test}"
 
 # ── 滑窗/推理参数 ────────────────────────────────────────────────────────────
 PATCH_SIZE="${PATCH_SIZE:-512}"
 PATCH_OVERLAP_RATIO="${PATCH_OVERLAP_RATIO:-0.2}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
 SCORE_THRESH="${SCORE_THRESH:-0.5}"
+MERGE_OVERLAP_RATIO="${MERGE_OVERLAP_RATIO:-0.25}"
 
 # ── 功能开关（0=关闭, 1=开启）────────────────────────────────────────────────
 ENABLE_GT="${ENABLE_GT:-1}"                  # GT 几何分析（取向/尺寸）
@@ -63,6 +64,7 @@ ENABLE_SAVE_IMAGES="${ENABLE_SAVE_IMAGES:-1}" # 中间过程图（hull/hex 等�
 GEOM_WORKERS="${GEOM_WORKERS:-8}"            # 并行线程数
 SCATTER_METRIC="${SCATTER_METRIC:-both}"      # 散点图标题指标: mae / r2 / both
 export BL_MASK_ALPHA=70
+export BL_SLIDING_MERGE_OVERLAP_RATIO="${MERGE_OVERLAP_RATIO}"
 # ── 物理尺度换算（可选）───────────────────────────────────────────────────────
 SCALE_RATIO="${SCALE_RATIO:-}"               # μm/px 等比例
 SCALE_UNIT="${SCALE_UNIT:-}"                 # 单位名称
