@@ -50,7 +50,7 @@ def _draw_arrow(draw, p1_xy, p2_xy, *, color="blue", width=3, head_len=None, hea
 
     draw.line([(int(round(x2)), int(round(y2))), (int(round(p3[0])), int(round(p3[1])))], fill=color, width=int(width))
     draw.line([(int(round(x2)), int(round(y2))), (int(round(p4[0])), int(round(p4[1])))], fill=color, width=int(width))
-def angle_edge_reg(all_hexagons,  base_img, save_dir, *, save_images: bool = True, save_hist: bool = True, draw_vertex_labels: bool = False):
+def angle_edge_reg(all_hexagons,  base_img, save_dir, *, save_images: bool = True, save_hist: bool = True, draw_vertex_labels: bool = True):
     """计算并绘制所有六边形的边缘方向角分布（相对于随机参考凸包边缘）"""
     edge_angles = []
     XP1=[]

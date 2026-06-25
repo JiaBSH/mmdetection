@@ -47,11 +47,11 @@ CHECKPOINT_EPOCH="${CHECKPOINT_EPOCH:-}"
 OUT_ROOT="${OUT_ROOT:-outputs/run_syn_rotation_test}"
 
 # ── 滑窗/推理参数 ────────────────────────────────────────────────────────────
-PATCH_SIZE="${PATCH_SIZE:-512}"
+PATCH_SIZE="${PATCH_SIZE:-400}"
 PATCH_OVERLAP_RATIO="${PATCH_OVERLAP_RATIO:-0.2}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
 SCORE_THRESH="${SCORE_THRESH:-0.5}"
-MERGE_OVERLAP_RATIO="${MERGE_OVERLAP_RATIO:-0.25}"
+MERGE_OVERLAP_RATIO="${MERGE_OVERLAP_RATIO:-0.3}"
 
 # ── 功能开关（0=关闭, 1=开启）────────────────────────────────────────────────
 ENABLE_GT="${ENABLE_GT:-1}"                  # GT 几何分析（取向/尺寸）
@@ -83,7 +83,7 @@ run_compare() {
         --ann-file "${ann_file}"
         --img-dir "${img_dir}"
         --out-dir "${out_dir}"
-        --model-cfg postprocess/model_list.yaml
+        --model-cfg postprocess/test_list.yaml
         --model-root "${MODEL_ROOT}"
         --score-thresh "${SCORE_THRESH}"
         --device cuda:0
@@ -120,25 +120,34 @@ run_compare() {
     python postprocess/compare_models.py "${compare_args[@]}"
 }
 run_compare \
-    "5x_unsup" \
+    "5x_rotation_03_400_edge" \
     "data/syn_multimag/coco_rotation/test5_t1/instances_test.json" \
     "data/syn_multimag/coco_rotation/test5_t1/images" \
     "sliding"
 '''
 run_compare \
-    "2_5x_rotation" \
-    "data/syn_multimag/coco_rotation/test2_5_t1/instances_test.json" \
-    "data/syn_multimag/coco_rotation/test2_5_t1/images" \
+    "20x" \
+    "dataset_root/mmdata_test_1024/annotations/instances_20x.json" \
+    "dataset_root/mmdata_test_1024/images/20xtest" \
+    "plain"
+
+run_compare \
+    "50x_test" \
+    "data/syn_multimag/coco_rotation/test5_t1/instances_test.json" \
+    "data/syn_multimag/coco_rotation/test50/images" \
+    "plain"
+run_compare \
+    "5x_unsup" \
+    "data/syn_multimag/coco_rotation/test5_t1/instances_test.json" \
+    "data/syn_multimag/coco_rotation/test5_t1/images" \
     "sliding"
 
 
 
+
+
     # 20x / 50x / 100x: 非滑窗预测
-run_compare \
-    "20x" \
-    "dataset_root/mmdata_test_1024/annotations/instances_20x.json" \
-    "dataset_root/mmdata_test_1024/images/20x" \
-    "plain"
+
     
 
 
