@@ -14,7 +14,7 @@ from PIL import Image, ImageDraw
 import csv
 import json
 import matplotlib.pyplot as plt
-from .fit_polygon import fit_polygon
+from .fit_E import fit_polygon
 #from fitting import fit_polygon
 from .ex_coords import ex_c
 from .angle_diag import angle_diag_reg

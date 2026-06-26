@@ -120,9 +120,9 @@ run_compare() {
     python postprocess/compare_models.py "${compare_args[@]}"
 }
 run_compare \
-    "5x_rotation_03_400_edge" \
-    "data/syn_multimag/coco_rotation/test5_t1/instances_test.json" \
-    "data/syn_multimag/coco_rotation/test5_t1/images" \
+    "2_5x_rotation_03_400_edge_fix" \
+    "data/syn_multimag/coco_rotation/test2_5_t1/instances_test.json" \
+    "data/syn_multimag/coco_rotation/test2_5_t1/images" \
     "sliding"
 '''
 run_compare \
