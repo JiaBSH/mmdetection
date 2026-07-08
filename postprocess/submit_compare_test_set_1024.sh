@@ -6,17 +6,17 @@
 #SBATCH --time=48:00:00
 #SBATCH --output=logs/slurm_%j.out
 #SBATCH --error=logs/slurm_%j.err
-
+module load cuda/13.0
 set -euo pipefail
+
+module purge 2>/dev/null || true
 
 # ── Environment ──────────────────────────────────────────────────────────────
 CONDA_BASE="${CONDA_BASE:-/data/apps/miniforge/25.3.0-3}"
 CONDA_ENV="${CONDA_ENV_NAME:-mmdetection_para}"
 PROJECT_ROOT="${PROJECT_ROOT:-/data/run01/scvi576/JiaBSH/mmdetection_para}"
 TORCH_HOME="${TORCH_HOME:-/data/run01/scvi576/JiaBSH/.torch_cache}"
-CUDA_HOME="${CUDA_HOME:-/data/apps/cuda/12.8}"
-
-module purge 2>/dev/null || true
+CUDA_HOME="${CUDA_HOME:-/data/apps/cuda/13.0}"
 source "${CONDA_BASE}/etc/profile.d/conda.sh"
 conda activate "$CONDA_ENV"
 
@@ -42,16 +42,16 @@ cd /data/home/scvi576/run/JiaBSH/mmdetection_para
 echo "===== test_set_1024 多模型测评 ====="
 
 # ── 基本路径 ──────────────────────────────────────────────────────────────────
-MODEL_ROOT="${MODEL_ROOT:-work_dirs/run_syn_rotation}"
+MODEL_ROOT="${MODEL_ROOT:-work_dirs/run_isat}"
 CHECKPOINT_EPOCH="${CHECKPOINT_EPOCH:-}"
-OUT_ROOT="${OUT_ROOT:-outputs/run_syn_rotation_test}"
+OUT_ROOT="${OUT_ROOT:-outputs/run_isat}"
 
 # ── 滑窗/推理参数 ────────────────────────────────────────────────────────────
-PATCH_SIZE="${PATCH_SIZE:-400}"
-PATCH_OVERLAP_RATIO="${PATCH_OVERLAP_RATIO:-0.2}"
+PATCH_SIZE="${PATCH_SIZE:-600}"
+PATCH_OVERLAP_RATIO="${PATCH_OVERLAP_RATIO:-0.1}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
 SCORE_THRESH="${SCORE_THRESH:-0.5}"
-MERGE_OVERLAP_RATIO="${MERGE_OVERLAP_RATIO:-0.3}"
+MERGE_OVERLAP_RATIO="${MERGE_OVERLAP_RATIO:-0.5}"
 
 # ── 功能开关（0=关闭, 1=开启）────────────────────────────────────────────────
 ENABLE_GT="${ENABLE_GT:-1}"                  # GT 几何分析（取向/尺寸）
@@ -120,11 +120,13 @@ run_compare() {
     python postprocess/compare_models.py "${compare_args[@]}"
 }
 run_compare \
-    "2_5x_rotation_03_400_edge_fix" \
-    "data/syn_multimag/coco_rotation/test2_5_t1/instances_test.json" \
-    "data/syn_multimag/coco_rotation/test2_5_t1/images" \
-    "sliding"
-'''
+    "2_5x_plain_isat" \
+    "dataset_root/mmdata_test/annotations/instances_2_5x_unsup.json" \
+    "dataset_root/mmdata_test/2_5x_unsup/image" \
+    "plain"
+
+# ---- old tests (heredoc skip) ----
+: <<'SKIP'
 run_compare \
     "20x" \
     "dataset_root/mmdata_test_1024/annotations/instances_20x.json" \
@@ -184,5 +186,5 @@ run_compare \
     "dataset_root/test_set_1024/annotations/instances_5x_unsup.json" \
     "dataset_root/test_set_1024/images/5x_unsup" \
     "sliding"
-'''
+SKIP
 echo "===== 完成 ====="

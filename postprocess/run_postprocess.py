@@ -216,12 +216,14 @@ def _save_sliding_window_visualization(
         xs = coords[:, 1].astype(np.int64)
         centroid_x = int(xs.mean())
         centroid_y = int(ys.mean())
+        '''
         draw_labels.text(
             (centroid_x, centroid_y),
             f"#{inst['id']}",
             fill=(0, 255, 0, 255),
             font=font,
         )
+        '''
 
     removed_ids_drawn: set[int | None] = set()
     for record in merge_records:
@@ -238,12 +240,14 @@ def _save_sliding_window_visualization(
         xs = (removed_coords % width).astype(np.int64)
         centroid_x = int(xs.mean())
         centroid_y = int(ys.mean())
+        '''
         draw_labels.text(
             (centroid_x, centroid_y),
             f"-{removed_id}",
             fill=(255, 0, 0, 255),
             font=font,
         )
+        '''
 
     windows_vis.save(os.path.join(out_dir, "overlap_windows_visualization.png"))
 
