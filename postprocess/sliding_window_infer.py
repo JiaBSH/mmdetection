@@ -74,6 +74,31 @@ def _touches_internal_patch_edge(
     return False
 
 
+def _instance_center_in_valid_region(
+    ys: np.ndarray,
+    xs: np.ndarray,
+    *,
+    valid_top: int,
+    valid_left: int,
+    valid_bottom: int,
+    valid_right: int,
+) -> bool:
+    if ys.size == 0 or xs.size == 0:
+        return False
+
+    if os.getenv("BL_SLIDING_VALID_REGION_CENTER", "bbox") == "centroid":
+        cy = float(ys.mean())
+        cx = float(xs.mean())
+    else:
+        cy = 0.5 * (float(ys.min()) + float(ys.max()))
+        cx = 0.5 * (float(xs.min()) + float(xs.max()))
+
+    return (
+        valid_top <= cy < valid_bottom
+        and valid_left <= cx < valid_right
+    )
+
+
 def _iter_windows(
     image_height: int,
     image_width: int,
@@ -191,14 +216,16 @@ def _extract_patch_instances(
         ):
             continue
 
-        in_valid_region = (
-            (ys >= valid_top)
-            & (ys < valid_bottom)
-            & (xs >= valid_left)
-            & (xs < valid_right)
-        )
-        ys = ys[in_valid_region]
-        xs = xs[in_valid_region]
+        if edge_margin > 0 and not _instance_center_in_valid_region(
+            ys,
+            xs,
+            valid_top=valid_top,
+            valid_left=valid_left,
+            valid_bottom=valid_bottom,
+            valid_right=valid_right,
+        ):
+            continue
+
         if ys.size < min_pixel_count:
             continue
 
