@@ -18,85 +18,52 @@ def _env_float(name: str, default: float) -> float:
 
 def _overlap_pixels(patch_size: int, patch_overlap_ratio: float) -> int:
     overlap = int(patch_size * patch_overlap_ratio)
-    return max(0, min(overlap, int(patch_size) - 1))
+    return max(0, min(overlap, patch_size - 1))
 
 
-def _edge_suppression_margin(patch_size: int, patch_overlap_ratio: float) -> int:
-    if os.getenv("BL_SLIDING_DISABLE_EDGE_SUPPRESSION", "0") == "1":
-        return 0
+def _axis_starts(length: int, patch_size: int, overlap: int) -> list[int]:
+    """Return endpoint-aligned starts without creating narrow edge crops."""
+    if length <= patch_size:
+        return [0]
 
-    explicit_margin = os.getenv("BL_SLIDING_EDGE_SUPPRESS_MARGIN_PX")
-    if explicit_margin is not None:
-        try:
-            margin = int(float(explicit_margin))
-        except ValueError:
-            margin = 0
+    step = max(patch_size - overlap, 1)
+    span = int(length) - int(patch_size)
+    intervals = max(1, int(np.ceil(span / float(step))))
+    starts = np.rint(np.linspace(0, span, intervals + 1)).astype(np.int64)
+
+    deduped: list[int] = []
+    for start in starts.tolist():
+        start_i = int(max(0, min(span, start)))
+        if not deduped or start_i != deduped[-1]:
+            deduped.append(start_i)
+    if deduped[-1] != span:
+        deduped.append(span)
+    return deduped
+
+
+def _axis_core_bounds(
+    starts: list[int],
+    index: int,
+    patch_size: int,
+    image_length: int,
+) -> tuple[float, float]:
+    if len(starts) == 1:
+        return 0.0, float(image_length)
+
+    start = starts[index]
+    if index == 0:
+        core_start = 0.0
     else:
-        overlap = _overlap_pixels(patch_size, patch_overlap_ratio)
-        margin_fraction = _env_float("BL_SLIDING_EDGE_MARGIN_FRACTION", 0.5)
-        margin = int(overlap * margin_fraction)
+        prev_start = starts[index - 1]
+        core_start = 0.5 * (float(prev_start) + float(start) + float(patch_size))
 
-    max_margin = max(0, int(patch_size) // 2 - 1)
-    return max(0, min(margin, max_margin))
-
-
-def _drop_edge_touching_instances_enabled() -> bool:
-    return os.getenv("BL_SLIDING_DROP_EDGE_TOUCHING_INSTANCES", "1") != "0"
-
-
-def _touches_internal_patch_edge(
-    ys: np.ndarray,
-    xs: np.ndarray,
-    *,
-    actual_height: int,
-    actual_width: int,
-    left: int,
-    top: int,
-    right: int,
-    bottom: int,
-    image_height: int,
-    image_width: int,
-) -> bool:
-    if ys.size == 0 or xs.size == 0:
-        return False
-
-    tol = int(_env_float("BL_SLIDING_EDGE_TOUCH_TOLERANCE_PX", 2.0))
-    tol = max(0, tol)
-
-    if top > 0 and int(ys.min()) <= tol:
-        return True
-    if left > 0 and int(xs.min()) <= tol:
-        return True
-    if bottom < image_height and int(ys.max()) >= max(0, actual_height - 1 - tol):
-        return True
-    if right < image_width and int(xs.max()) >= max(0, actual_width - 1 - tol):
-        return True
-    return False
-
-
-def _instance_center_in_valid_region(
-    ys: np.ndarray,
-    xs: np.ndarray,
-    *,
-    valid_top: int,
-    valid_left: int,
-    valid_bottom: int,
-    valid_right: int,
-) -> bool:
-    if ys.size == 0 or xs.size == 0:
-        return False
-
-    if os.getenv("BL_SLIDING_VALID_REGION_CENTER", "bbox") == "centroid":
-        cy = float(ys.mean())
-        cx = float(xs.mean())
+    if index == len(starts) - 1:
+        core_end = float(image_length)
     else:
-        cy = 0.5 * (float(ys.min()) + float(ys.max()))
-        cx = 0.5 * (float(xs.min()) + float(xs.max()))
+        next_start = starts[index + 1]
+        core_end = 0.5 * (float(start) + float(next_start) + float(patch_size))
 
-    return (
-        valid_top <= cy < valid_bottom
-        and valid_left <= cx < valid_right
-    )
+    return core_start, core_end
 
 
 def _iter_windows(
@@ -105,18 +72,40 @@ def _iter_windows(
     patch_size: int,
     patch_overlap_ratio: float,
 ):
-    overlap = int(patch_size * patch_overlap_ratio)
+    overlap = _overlap_pixels(patch_size, patch_overlap_ratio)
     if overlap >= patch_size:
         raise ValueError(
-            "patch_overlap_ratio 对应的重叠像素不能大于等于 patch_size"
+            "patch_overlap_ratio produces overlap >= patch_size"
         )
-    step = max(patch_size - overlap, 1)
 
-    for top in range(0, image_height, step):
-        for left in range(0, image_width, step):
+    y_starts = _axis_starts(image_height, patch_size, overlap)
+    x_starts = _axis_starts(image_width, patch_size, overlap)
+    idx = 0
+    for gy, top in enumerate(y_starts):
+        core_top, core_bottom = _axis_core_bounds(
+            y_starts, gy, patch_size, image_height
+        )
+        for gx, left in enumerate(x_starts):
+            core_left, core_right = _axis_core_bounds(
+                x_starts, gx, patch_size, image_width
+            )
             bottom = min(top + patch_size, image_height)
             right = min(left + patch_size, image_width)
-            yield left, top, right, bottom
+            yield {
+                "idx": idx,
+                "left": int(left),
+                "top": int(top),
+                "right": int(right),
+                "bottom": int(bottom),
+                "core_left": float(core_left),
+                "core_top": float(core_top),
+                "core_right": float(core_right),
+                "core_bottom": float(core_bottom),
+                "grid_x": int(gx),
+                "grid_y": int(gy),
+                "overlap": int(overlap),
+            }
+            idx += 1
 
 
 def _prepare_patch_image(
@@ -137,20 +126,40 @@ def _prepare_patch_image(
     return padded
 
 
+def _mask_center(
+    ys_global: np.ndarray,
+    xs_global: np.ndarray,
+) -> tuple[float, float]:
+    mode = os.getenv("BL_SLIDING_ASSIGN_CENTER", "bbox")
+    if mode == "centroid":
+        return float(ys_global.mean()), float(xs_global.mean())
+
+    cy = 0.5 * (float(ys_global.min()) + float(ys_global.max()))
+    cx = 0.5 * (float(xs_global.min()) + float(xs_global.max()))
+    return cy, cx
+
+
+def _center_in_core(
+    center_y: float,
+    center_x: float,
+    window: dict[str, Any],
+) -> bool:
+    return (
+        float(window["core_top"]) <= center_y < float(window["core_bottom"])
+        and float(window["core_left"]) <= center_x < float(window["core_right"])
+    )
+
+
 def _extract_patch_instances(
     pred_instances,
     *,
-    left: int,
-    top: int,
-    right: int,
-    bottom: int,
+    window: dict[str, Any],
     image_height: int,
     image_width: int,
     score_thresh: float,
     target_label: int,
     min_pixel_count: int,
     next_instance_id: int,
-    edge_margin: int,
 ) -> tuple[list[dict], int]:
     masks = getattr(pred_instances, "masks", None)
     if masks is None:
@@ -166,6 +175,13 @@ def _extract_patch_instances(
     scores_np = _to_numpy(getattr(pred_instances, "scores", None))
     labels_np = _to_numpy(getattr(pred_instances, "labels", None))
 
+    left = int(window["left"])
+    top = int(window["top"])
+    right = int(window["right"])
+    bottom = int(window["bottom"])
+    actual_height = max(0, min(bottom - top, masks_np.shape[-2]))
+    actual_width = max(0, min(right - left, masks_np.shape[-1]))
+
     instances: list[dict] = []
     for index, mask in enumerate(masks_np):
         score = float(scores_np[index]) if scores_np is not None else 1.0
@@ -176,61 +192,23 @@ def _extract_patch_instances(
         if label != target_label:
             continue
 
-        mask_height, mask_width = mask.shape[:2]
-        actual_height = max(0, min(int(bottom - top), int(mask_height)))
-        actual_width = max(0, min(int(right - left), int(mask_width)))
-        valid_top = 0
-        valid_left = 0
-        valid_bottom = actual_height
-        valid_right = actual_width
-
-        if edge_margin > 0:
-            if top > 0:
-                valid_top = min(edge_margin, valid_bottom)
-            if left > 0:
-                valid_left = min(edge_margin, valid_right)
-            if bottom < image_height:
-                valid_bottom = max(valid_top, valid_bottom - edge_margin)
-            if right < image_width:
-                valid_right = max(valid_left, valid_right - edge_margin)
-
-        if valid_bottom <= valid_top or valid_right <= valid_left:
-            continue
-
         ys, xs = np.where(mask)
-        if (
-            edge_margin > 0
-            and _drop_edge_touching_instances_enabled()
-            and _touches_internal_patch_edge(
-                ys,
-                xs,
-                actual_height=actual_height,
-                actual_width=actual_width,
-                left=left,
-                top=top,
-                right=right,
-                bottom=bottom,
-                image_height=image_height,
-                image_width=image_width,
-            )
-        ):
+        if ys.size == 0:
             continue
 
-        if edge_margin > 0 and not _instance_center_in_valid_region(
-            ys,
-            xs,
-            valid_top=valid_top,
-            valid_left=valid_left,
-            valid_bottom=valid_bottom,
-            valid_right=valid_right,
-        ):
-            continue
-
+        inside_image_crop = (
+            (ys >= 0)
+            & (ys < actual_height)
+            & (xs >= 0)
+            & (xs < actual_width)
+        )
+        ys = ys[inside_image_crop]
+        xs = xs[inside_image_crop]
         if ys.size < min_pixel_count:
             continue
 
-        ys_global = ys + top
-        xs_global = xs + left
+        ys_global = ys.astype(np.int64, copy=False) + top
+        xs_global = xs.astype(np.int64, copy=False) + left
         valid = (
             (ys_global >= 0)
             & (ys_global < image_height)
@@ -242,6 +220,10 @@ def _extract_patch_instances(
 
         ys_valid = ys_global[valid].astype(np.int64, copy=False)
         xs_valid = xs_global[valid].astype(np.int64, copy=False)
+        center_y, center_x = _mask_center(ys_valid, xs_valid)
+        if not _center_in_core(center_y, center_x, window):
+            continue
+
         flat_coords = (
             ys_valid * int(image_width) + xs_valid
         ).astype(np.int32, copy=False)
@@ -257,6 +239,7 @@ def _extract_patch_instances(
                 "coords": flat_coords,
                 "bbox": bbox,
                 "score": score,
+                "window_idx": int(window["idx"]),
             }
         )
         next_instance_id += 1
@@ -270,153 +253,154 @@ def _resolve_overlaps(
     image_width: int,
     merge_records: list[dict],
 ) -> list[dict]:
-    """Merge overlapping instances when the overlap is substantial.
-
-    Two *different* domains never overlap spatially — they are separated by
-    domain walls.  Therefore two instances that share a large fraction of
-    pixels must be the same domain predicted from different windows (or
-    double-detected).  A tiny overlap (boundary fuzz between adjacent
-    domains) is handled by winner-take-all instead of merging.
-    """
+    """Merge true duplicate detections, then assign residual overlaps by score."""
     if not instances:
         return []
 
     size = int(image_height) * int(image_width)
     n = len(instances)
-
-    # ── 1. build pixel→id map; record conflict pairs + overlap size ────
     id_map = np.zeros(size, dtype=np.int32)
-    # conflict_pairs: (id_a, id_b) → set of flat pixel coords where they overlap
-    conflict_pixels: dict[tuple[int, int], set] = {}
+    conflict_pixels: dict[tuple[int, int], set[int]] = {}
 
     order = sorted(range(n), key=lambda i: instances[i].get("score", 0.0))
     for idx in order:
         inst = instances[idx]
-        coords = inst.get("coords")
-        if coords is None:
-            continue
-        flat = np.asarray(coords, dtype=np.int64)
+        flat = np.asarray(inst.get("coords"), dtype=np.int64)
         valid = (flat >= 0) & (flat < size)
         if not np.any(valid):
             continue
+
         flat_valid = flat[valid]
         existing = id_map[flat_valid]
-        conflict_ids = np.unique(existing[existing > 0])
-        for eid in conflict_ids:
-            eid = int(eid)
-            if eid != inst["id"]:
-                key = (min(inst["id"], eid), max(inst["id"], eid))
-                # record pixels where this pair conflicts
-                mask = np.isin(flat_valid, flat_valid[existing == eid])
-                if key not in conflict_pixels:
-                    conflict_pixels[key] = set()
-                conflict_pixels[key].update(flat_valid[mask].tolist())
+        for existing_id in np.unique(existing[existing > 0]):
+            existing_id = int(existing_id)
+            if existing_id == int(inst["id"]):
+                continue
+            key = (min(int(inst["id"]), existing_id), max(int(inst["id"]), existing_id))
+            overlap_pixels = flat_valid[existing == existing_id]
+            conflict_pixels.setdefault(key, set()).update(overlap_pixels.tolist())
         id_map[flat_valid] = int(inst["id"])
 
-    # ── 2. decide merge vs keep-separate based on overlap ratio ─────────
-    # Only merge when overlap / min_size > threshold (same domain).
-    overlap_ratio_threshold = float(
-        os.getenv("BL_SLIDING_MERGE_OVERLAP_RATIO", "0.25")
-    )
-    id_to_idx: dict[int, int] = {inst["id"]: i for i, inst in enumerate(instances)}
+    overlap_ratio_threshold = _env_float("BL_SLIDING_MERGE_OVERLAP_RATIO", 0.25)
+    id_to_idx: dict[int, int] = {
+        int(inst["id"]): i for i, inst in enumerate(instances)
+    }
     instance_sizes = {
-        inst["id"]: len(np.asarray(inst.get("coords"), dtype=np.int64))
+        int(inst["id"]): int(np.asarray(inst.get("coords"), dtype=np.int64).size)
         for inst in instances
     }
 
     parent = list(range(n))
 
-    def _find(v: int) -> int:
-        while parent[v] != v:
-            parent[v] = parent[parent[v]]
-            v = parent[v]
-        return v
+    def find(value: int) -> int:
+        while parent[value] != value:
+            parent[value] = parent[parent[value]]
+            value = parent[value]
+        return value
 
-    def _union(a: int, b: int) -> None:
-        ra, rb = _find(a), _find(b)
-        if ra != rb:
-            parent[ra] = rb
+    def union(a: int, b: int) -> None:
+        root_a, root_b = find(a), find(b)
+        if root_a != root_b:
+            parent[root_a] = root_b
 
     for (id_a, id_b), pixels in conflict_pixels.items():
         if id_a not in id_to_idx or id_b not in id_to_idx:
             continue
-        overlap_sz = len(pixels)
-        min_sz = min(instance_sizes.get(id_a, 1), instance_sizes.get(id_b, 1))
-        if min_sz <= 0:
+        min_size = min(instance_sizes.get(id_a, 0), instance_sizes.get(id_b, 0))
+        if min_size <= 0:
             continue
-        ratio = overlap_sz / float(min_sz)
-        if ratio >= overlap_ratio_threshold:
-            _union(id_to_idx[id_a], id_to_idx[id_b])
+        if len(pixels) / float(min_size) >= overlap_ratio_threshold:
+            union(id_to_idx[id_a], id_to_idx[id_b])
 
-    # ── 3. group by root ───────────────────────────────────────────────
     groups: dict[int, list[int]] = {}
-    for i in range(n):
-        root = _find(i)
-        groups.setdefault(root, []).append(i)
+    for idx in range(n):
+        groups.setdefault(find(idx), []).append(idx)
 
-    # ── 4. materialise ─────────────────────────────────────────────────
-    resolved: list[dict] = []
+    merged: list[dict] = []
     for group_indices in groups.values():
         if len(group_indices) == 1:
-            inst = instances[group_indices[0]]
-            flat = np.asarray(inst.get("coords"), dtype=np.int64)
-            valid = (flat >= 0) & (flat < size)
-            if not np.any(valid):
-                continue
-            flat_valid = flat[valid]
-            keep_mask = id_map[flat_valid] == inst["id"]
-            if not np.any(keep_mask):
-                continue
-            kept_flat = flat_valid[keep_mask].astype(np.int32, copy=False)
-            ys_kept = (kept_flat // image_width).astype(np.int64, copy=False)
-            xs_kept = (kept_flat % image_width).astype(np.int64, copy=False)
-            new_inst = dict(inst)
-            new_inst["coords"] = kept_flat
-            new_inst["bbox"] = [
-                int(xs_kept.min()), int(ys_kept.min()),
-                int(xs_kept.max()), int(ys_kept.max()),
-            ]
-            resolved.append(new_inst)
-        else:
-            group_insts = [instances[i] for i in group_indices]
-            ordered = sorted(group_insts, key=lambda x: x.get("score", 0.0))
-            keep_inst = dict(ordered[-1])
-            keep_id = int(keep_inst["id"])
-            keep_coords = np.asarray(keep_inst.get("coords"), dtype=np.int32)
+            merged.append(instances[group_indices[0]])
+            continue
 
-            for other in ordered[:-1]:
-                other_id = int(other.get("id", 0))
-                other_coords = np.asarray(other.get("coords"), dtype=np.int32)
-                ol = (
-                    np.intersect1d(other_coords, keep_coords)
-                    if other_coords.size > 0 and keep_coords.size > 0
-                    else np.array([], dtype=np.int32)
-                )
-                ro = (
-                    np.setdiff1d(other_coords, keep_coords)
-                    if other_coords.size > 0
-                    else np.array([], dtype=np.int32)
-                )
-                merge_records.append({
+        group_insts = [instances[i] for i in group_indices]
+        ordered = sorted(group_insts, key=lambda x: x.get("score", 0.0))
+        keep_inst = dict(ordered[-1])
+        keep_id = int(keep_inst["id"])
+        keep_coords = np.asarray(keep_inst.get("coords"), dtype=np.int32)
+
+        for other in ordered[:-1]:
+            other_id = int(other.get("id", 0))
+            other_coords = np.asarray(other.get("coords"), dtype=np.int32)
+            overlap = (
+                np.intersect1d(other_coords, keep_coords)
+                if other_coords.size and keep_coords.size
+                else np.array([], dtype=np.int32)
+            )
+            removed_only = (
+                np.setdiff1d(other_coords, keep_coords)
+                if other_coords.size
+                else np.array([], dtype=np.int32)
+            )
+            merge_records.append(
+                {
                     "kept": keep_id,
                     "removed": other_id,
-                    "overlap": ol,
-                    "removed_only": ro,
+                    "overlap": overlap,
+                    "removed_only": removed_only,
                     "removed_coords": other_coords.copy(),
-                })
-                keep_coords = np.union1d(keep_coords, other_coords).astype(
-                    np.int32, copy=False
-                )
+                }
+            )
+            keep_coords = np.union1d(keep_coords, other_coords).astype(
+                np.int32, copy=False
+            )
 
-            ys = (keep_coords // image_width).astype(np.int64, copy=False)
-            xs = (keep_coords % image_width).astype(np.int64, copy=False)
-            keep_inst["coords"] = keep_coords
-            keep_inst["bbox"] = [
-                int(xs.min()), int(ys.min()),
-                int(xs.max()), int(ys.max()),
-            ]
-            resolved.append(keep_inst)
+        keep_inst["coords"] = keep_coords
+        keep_inst["bbox"] = _bbox_from_flat(keep_coords, image_width)
+        merged.append(keep_inst)
 
+    return _assign_visible_pixels_by_score(merged, image_height, image_width)
+
+
+def _bbox_from_flat(flat_coords: np.ndarray, image_width: int) -> list[int]:
+    ys = (flat_coords // image_width).astype(np.int64, copy=False)
+    xs = (flat_coords % image_width).astype(np.int64, copy=False)
+    return [int(xs.min()), int(ys.min()), int(xs.max()), int(ys.max())]
+
+
+def _assign_visible_pixels_by_score(
+    instances: list[dict],
+    image_height: int,
+    image_width: int,
+) -> list[dict]:
+    if not instances:
+        return []
+
+    size = int(image_height) * int(image_width)
+    id_map = np.zeros(size, dtype=np.int32)
+    for inst in sorted(instances, key=lambda x: x.get("score", 0.0)):
+        flat = np.asarray(inst.get("coords"), dtype=np.int64)
+        valid = (flat >= 0) & (flat < size)
+        if np.any(valid):
+            id_map[flat[valid]] = int(inst["id"])
+
+    resolved: list[dict] = []
+    for inst in instances:
+        inst_id = int(inst.get("id", 0))
+        flat = np.asarray(inst.get("coords"), dtype=np.int64)
+        valid = (flat >= 0) & (flat < size)
+        if inst_id == 0 or not np.any(valid):
+            continue
+
+        flat_valid = flat[valid]
+        keep_mask = id_map[flat_valid] == inst_id
+        if not np.any(keep_mask):
+            continue
+
+        kept_flat = flat_valid[keep_mask].astype(np.int32, copy=False)
+        new_inst = dict(inst)
+        new_inst["coords"] = kept_flat
+        new_inst["bbox"] = _bbox_from_flat(kept_flat, image_width)
+        resolved.append(new_inst)
     return resolved
 
 
@@ -480,22 +464,21 @@ def infer_image_with_overlap_windows(
     from mmdet.apis import inference_detector  # type: ignore
 
     if patch_size <= 0:
-        raise ValueError(f"patch_size 必须大于 0，实际为 {patch_size}")
+        raise ValueError(f"patch_size must be positive, got {patch_size}")
     if not (0.0 <= patch_overlap_ratio < 1.0):
         raise ValueError(
-            f"patch_overlap_ratio 必须满足 0 <= ratio < 1，实际为 {patch_overlap_ratio}"
+            f"patch_overlap_ratio must satisfy 0 <= ratio < 1, got {patch_overlap_ratio}"
         )
 
     pil_img = Image.open(img_path).convert("RGB")
     image_np = np.asarray(pil_img)
     image_height, image_width = image_np.shape[:2]
-    edge_margin = _edge_suppression_margin(patch_size, patch_overlap_ratio)
 
     flat_instances: list[dict] = []
     merge_records: list[dict] = []
     windows: list[dict] = []
     next_instance_id = 1
-    pending_windows: list[tuple[int, int, int, int]] = []
+    pending_windows: list[dict[str, Any]] = []
     pending_patches: list[np.ndarray] = []
 
     def flush_batch() -> None:
@@ -507,27 +490,23 @@ def infer_image_with_overlap_windows(
         if not isinstance(batch_result, list):
             batch_result = [batch_result]
 
-        for result, (left, top, right, bottom) in zip(batch_result, pending_windows):
+        for result, window in zip(batch_result, pending_windows):
             patch_instances, next_instance_id = _extract_patch_instances(
                 result.pred_instances,
-                left=left,
-                top=top,
-                right=right,
-                bottom=bottom,
+                window=window,
                 image_height=image_height,
                 image_width=image_width,
                 score_thresh=score_thresh,
                 target_label=target_label,
                 min_pixel_count=min_pixel_count,
                 next_instance_id=next_instance_id,
-                edge_margin=edge_margin,
             )
             flat_instances.extend(patch_instances)
 
         pending_windows.clear()
         pending_patches.clear()
 
-    for left, top, right, bottom in _iter_windows(
+    for window in _iter_windows(
         image_height,
         image_width,
         patch_size,
@@ -535,22 +514,28 @@ def infer_image_with_overlap_windows(
     ):
         windows.append(
             {
-                "idx": len(windows),
-                "left": int(left),
-                "top": int(top),
-                "right": int(right),
-                "bottom": int(bottom),
-                "edge_margin": int(edge_margin),
+                "idx": int(window["idx"]),
+                "left": int(window["left"]),
+                "top": int(window["top"]),
+                "right": int(window["right"]),
+                "bottom": int(window["bottom"]),
+                "core_left": float(window["core_left"]),
+                "core_top": float(window["core_top"]),
+                "core_right": float(window["core_right"]),
+                "core_bottom": float(window["core_bottom"]),
+                "grid_x": int(window["grid_x"]),
+                "grid_y": int(window["grid_y"]),
+                "overlap": int(window["overlap"]),
             }
         )
-        pending_windows.append((left, top, right, bottom))
+        pending_windows.append(window)
         pending_patches.append(
             _prepare_patch_image(
                 image_np,
-                left,
-                top,
-                right,
-                bottom,
+                int(window["left"]),
+                int(window["top"]),
+                int(window["right"]),
+                int(window["bottom"]),
                 patch_size,
             )
         )
