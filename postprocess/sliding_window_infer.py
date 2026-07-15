@@ -40,6 +40,40 @@ def _edge_suppression_margin(patch_size: int, patch_overlap_ratio: float) -> int
     return max(0, min(margin, max_margin))
 
 
+def _drop_edge_touching_instances_enabled() -> bool:
+    return os.getenv("BL_SLIDING_DROP_EDGE_TOUCHING_INSTANCES", "1") != "0"
+
+
+def _touches_internal_patch_edge(
+    ys: np.ndarray,
+    xs: np.ndarray,
+    *,
+    actual_height: int,
+    actual_width: int,
+    left: int,
+    top: int,
+    right: int,
+    bottom: int,
+    image_height: int,
+    image_width: int,
+) -> bool:
+    if ys.size == 0 or xs.size == 0:
+        return False
+
+    tol = int(_env_float("BL_SLIDING_EDGE_TOUCH_TOLERANCE_PX", 2.0))
+    tol = max(0, tol)
+
+    if top > 0 and int(ys.min()) <= tol:
+        return True
+    if left > 0 and int(xs.min()) <= tol:
+        return True
+    if bottom < image_height and int(ys.max()) >= max(0, actual_height - 1 - tol):
+        return True
+    if right < image_width and int(xs.max()) >= max(0, actual_width - 1 - tol):
+        return True
+    return False
+
+
 def _iter_windows(
     image_height: int,
     image_width: int,
@@ -139,6 +173,24 @@ def _extract_patch_instances(
             continue
 
         ys, xs = np.where(mask)
+        if (
+            edge_margin > 0
+            and _drop_edge_touching_instances_enabled()
+            and _touches_internal_patch_edge(
+                ys,
+                xs,
+                actual_height=actual_height,
+                actual_width=actual_width,
+                left=left,
+                top=top,
+                right=right,
+                bottom=bottom,
+                image_height=image_height,
+                image_width=image_width,
+            )
+        ):
+            continue
+
         in_valid_region = (
             (ys >= valid_top)
             & (ys < valid_bottom)
