@@ -165,6 +165,30 @@ def _save_sliding_window_visualization(
     windows_vis = overlayed.convert("RGBA")
     vis_overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(vis_overlay)
+
+    def draw_window_rect(
+        window: dict,
+        prefix: str,
+        color: tuple[int, int, int, int],
+        line_width: int,
+    ) -> None:
+        left_key = f"{prefix}_left"
+        top_key = f"{prefix}_top"
+        right_key = f"{prefix}_right"
+        bottom_key = f"{prefix}_bottom"
+        if not all(key in window for key in (left_key, top_key, right_key, bottom_key)):
+            return
+        draw.rectangle(
+            [
+                int(round(float(window[left_key]))),
+                int(round(float(window[top_key]))),
+                int(round(float(window[right_key]))),
+                int(round(float(window[bottom_key]))),
+            ],
+            outline=color,
+            width=line_width,
+        )
+
     for window in windows:
         draw.rectangle(
             [
@@ -176,6 +200,8 @@ def _save_sliding_window_visualization(
             outline=(30, 144, 255, 200),
             width=3,
         )
+        draw_window_rect(window, "core", (255, 215, 0, 210), 2)
+        draw_window_rect(window, "safe", (255, 0, 255, 220), 2)
 
     windows_vis = Image.alpha_composite(windows_vis, vis_overlay)
 

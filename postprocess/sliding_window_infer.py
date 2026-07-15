@@ -16,9 +16,54 @@ def _env_float(name: str, default: float) -> float:
         return default
 
 
+def _env_int(name: str, default: int | None = None) -> int | None:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
 def _overlap_pixels(patch_size: int, patch_overlap_ratio: float) -> int:
     overlap = int(patch_size * patch_overlap_ratio)
     return max(0, min(overlap, patch_size - 1))
+
+
+def _context_margin_pixels(patch_size: int) -> int:
+    margin_px = _env_int("BL_SLIDING_CONTEXT_MARGIN_PX", None)
+    if margin_px is None:
+        margin_px = int(
+            round(
+                patch_size
+                * _env_float("BL_SLIDING_CONTEXT_MARGIN_RATIO", 0.25)
+            )
+        )
+    max_margin = max((patch_size - 1) // 2, 0)
+    return max(0, min(int(margin_px), max_margin))
+
+
+def _effective_overlap_pixels(
+    patch_size: int,
+    patch_overlap_ratio: float,
+    context_margin: int,
+) -> tuple[int, int]:
+    requested = _overlap_pixels(patch_size, patch_overlap_ratio)
+    required = min(patch_size - 1, 2 * max(context_margin, 0))
+    return requested, max(requested, required)
+
+
+def _edge_touch_margin_pixels(patch_size: int, context_margin: int) -> int:
+    margin_px = _env_int("BL_SLIDING_EDGE_TOUCH_MARGIN_PX", None)
+    if margin_px is None:
+        margin_px = int(
+            round(
+                patch_size
+                * _env_float("BL_SLIDING_EDGE_TOUCH_MARGIN_RATIO", 0.02)
+            )
+        )
+    return max(0, min(int(margin_px), max(int(context_margin), 0)))
 
 
 def _axis_starts(length: int, patch_size: int, overlap: int) -> list[int]:
@@ -66,13 +111,34 @@ def _axis_core_bounds(
     return core_start, core_end
 
 
+def _axis_safe_bounds(
+    start: int,
+    end: int,
+    image_length: int,
+    context_margin: int,
+) -> tuple[float, float]:
+    safe_start = float(start)
+    safe_end = float(end)
+    if start > 0:
+        safe_start = min(safe_end, safe_start + float(context_margin))
+    if end < image_length:
+        safe_end = max(safe_start, safe_end - float(context_margin))
+    return safe_start, safe_end
+
+
 def _iter_windows(
     image_height: int,
     image_width: int,
     patch_size: int,
     patch_overlap_ratio: float,
 ):
-    overlap = _overlap_pixels(patch_size, patch_overlap_ratio)
+    context_margin = _context_margin_pixels(patch_size)
+    edge_touch_margin = _edge_touch_margin_pixels(patch_size, context_margin)
+    requested_overlap, overlap = _effective_overlap_pixels(
+        patch_size,
+        patch_overlap_ratio,
+        context_margin,
+    )
     if overlap >= patch_size:
         raise ValueError(
             "patch_overlap_ratio produces overlap >= patch_size"
@@ -91,6 +157,18 @@ def _iter_windows(
             )
             bottom = min(top + patch_size, image_height)
             right = min(left + patch_size, image_width)
+            safe_top, safe_bottom = _axis_safe_bounds(
+                int(top),
+                int(bottom),
+                image_height,
+                context_margin,
+            )
+            safe_left, safe_right = _axis_safe_bounds(
+                int(left),
+                int(right),
+                image_width,
+                context_margin,
+            )
             yield {
                 "idx": idx,
                 "left": int(left),
@@ -101,9 +179,16 @@ def _iter_windows(
                 "core_top": float(core_top),
                 "core_right": float(core_right),
                 "core_bottom": float(core_bottom),
+                "safe_left": float(safe_left),
+                "safe_top": float(safe_top),
+                "safe_right": float(safe_right),
+                "safe_bottom": float(safe_bottom),
                 "grid_x": int(gx),
                 "grid_y": int(gy),
                 "overlap": int(overlap),
+                "requested_overlap": int(requested_overlap),
+                "context_margin": int(context_margin),
+                "edge_touch_margin": int(edge_touch_margin),
             }
             idx += 1
 
@@ -147,6 +232,34 @@ def _center_in_core(
     return (
         float(window["core_top"]) <= center_y < float(window["core_bottom"])
         and float(window["core_left"]) <= center_x < float(window["core_right"])
+    )
+
+
+def _mask_touches_crop_edge(
+    ys_global: np.ndarray,
+    xs_global: np.ndarray,
+    window: dict[str, Any],
+    image_height: int,
+    image_width: int,
+) -> bool:
+    margin = int(window.get("edge_touch_margin", 0))
+    if margin <= 0 or ys_global.size == 0:
+        return False
+
+    left = int(window["left"])
+    top = int(window["top"])
+    right = int(window["right"])
+    bottom = int(window["bottom"])
+
+    min_y = int(ys_global.min())
+    max_y = int(ys_global.max())
+    min_x = int(xs_global.min())
+    max_x = int(xs_global.max())
+    return (
+        (left > 0 and min_x < left + margin)
+        or (right < image_width and max_x >= right - margin)
+        or (top > 0 and min_y < top + margin)
+        or (bottom < image_height and max_y >= bottom - margin)
     )
 
 
@@ -222,6 +335,14 @@ def _extract_patch_instances(
         xs_valid = xs_global[valid].astype(np.int64, copy=False)
         center_y, center_x = _mask_center(ys_valid, xs_valid)
         if not _center_in_core(center_y, center_x, window):
+            continue
+        if _mask_touches_crop_edge(
+            ys_valid,
+            xs_valid,
+            window,
+            image_height,
+            image_width,
+        ):
             continue
 
         flat_coords = (
@@ -523,9 +644,16 @@ def infer_image_with_overlap_windows(
                 "core_top": float(window["core_top"]),
                 "core_right": float(window["core_right"]),
                 "core_bottom": float(window["core_bottom"]),
+                "safe_left": float(window["safe_left"]),
+                "safe_top": float(window["safe_top"]),
+                "safe_right": float(window["safe_right"]),
+                "safe_bottom": float(window["safe_bottom"]),
                 "grid_x": int(window["grid_x"]),
                 "grid_y": int(window["grid_y"]),
                 "overlap": int(window["overlap"]),
+                "requested_overlap": int(window["requested_overlap"]),
+                "context_margin": int(window["context_margin"]),
+                "edge_touch_margin": int(window["edge_touch_margin"]),
             }
         )
         pending_windows.append(window)
