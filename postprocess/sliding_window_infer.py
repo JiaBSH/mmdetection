@@ -9,6 +9,37 @@ from PIL import Image
 from ._shared import _to_numpy
 
 
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _overlap_pixels(patch_size: int, patch_overlap_ratio: float) -> int:
+    overlap = int(patch_size * patch_overlap_ratio)
+    return max(0, min(overlap, int(patch_size) - 1))
+
+
+def _edge_suppression_margin(patch_size: int, patch_overlap_ratio: float) -> int:
+    if os.getenv("BL_SLIDING_DISABLE_EDGE_SUPPRESSION", "0") == "1":
+        return 0
+
+    explicit_margin = os.getenv("BL_SLIDING_EDGE_SUPPRESS_MARGIN_PX")
+    if explicit_margin is not None:
+        try:
+            margin = int(float(explicit_margin))
+        except ValueError:
+            margin = 0
+    else:
+        overlap = _overlap_pixels(patch_size, patch_overlap_ratio)
+        margin_fraction = _env_float("BL_SLIDING_EDGE_MARGIN_FRACTION", 0.5)
+        margin = int(overlap * margin_fraction)
+
+    max_margin = max(0, int(patch_size) // 2 - 1)
+    return max(0, min(margin, max_margin))
+
+
 def _iter_windows(
     image_height: int,
     image_width: int,
@@ -52,12 +83,15 @@ def _extract_patch_instances(
     *,
     left: int,
     top: int,
+    right: int,
+    bottom: int,
     image_height: int,
     image_width: int,
     score_thresh: float,
     target_label: int,
     min_pixel_count: int,
     next_instance_id: int,
+    edge_margin: int,
 ) -> tuple[list[dict], int]:
     masks = getattr(pred_instances, "masks", None)
     if masks is None:
@@ -83,7 +117,36 @@ def _extract_patch_instances(
         if label != target_label:
             continue
 
+        mask_height, mask_width = mask.shape[:2]
+        actual_height = max(0, min(int(bottom - top), int(mask_height)))
+        actual_width = max(0, min(int(right - left), int(mask_width)))
+        valid_top = 0
+        valid_left = 0
+        valid_bottom = actual_height
+        valid_right = actual_width
+
+        if edge_margin > 0:
+            if top > 0:
+                valid_top = min(edge_margin, valid_bottom)
+            if left > 0:
+                valid_left = min(edge_margin, valid_right)
+            if bottom < image_height:
+                valid_bottom = max(valid_top, valid_bottom - edge_margin)
+            if right < image_width:
+                valid_right = max(valid_left, valid_right - edge_margin)
+
+        if valid_bottom <= valid_top or valid_right <= valid_left:
+            continue
+
         ys, xs = np.where(mask)
+        in_valid_region = (
+            (ys >= valid_top)
+            & (ys < valid_bottom)
+            & (xs >= valid_left)
+            & (xs < valid_right)
+        )
+        ys = ys[in_valid_region]
+        xs = xs[in_valid_region]
         if ys.size < min_pixel_count:
             continue
 
@@ -347,6 +410,7 @@ def infer_image_with_overlap_windows(
     pil_img = Image.open(img_path).convert("RGB")
     image_np = np.asarray(pil_img)
     image_height, image_width = image_np.shape[:2]
+    edge_margin = _edge_suppression_margin(patch_size, patch_overlap_ratio)
 
     flat_instances: list[dict] = []
     merge_records: list[dict] = []
@@ -364,17 +428,20 @@ def infer_image_with_overlap_windows(
         if not isinstance(batch_result, list):
             batch_result = [batch_result]
 
-        for result, (left, top, _, _) in zip(batch_result, pending_windows):
+        for result, (left, top, right, bottom) in zip(batch_result, pending_windows):
             patch_instances, next_instance_id = _extract_patch_instances(
                 result.pred_instances,
                 left=left,
                 top=top,
+                right=right,
+                bottom=bottom,
                 image_height=image_height,
                 image_width=image_width,
                 score_thresh=score_thresh,
                 target_label=target_label,
                 min_pixel_count=min_pixel_count,
                 next_instance_id=next_instance_id,
+                edge_margin=edge_margin,
             )
             flat_instances.extend(patch_instances)
 
@@ -394,6 +461,7 @@ def infer_image_with_overlap_windows(
                 "top": int(top),
                 "right": int(right),
                 "bottom": int(bottom),
+                "edge_margin": int(edge_margin),
             }
         )
         pending_windows.append((left, top, right, bottom))
