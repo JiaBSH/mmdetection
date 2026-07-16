@@ -48,6 +48,18 @@ from postprocess.aggregate_matched_metrics import aggregate_root_dir  # noqa: E4
 from postprocess.summarize_model_metrics import write_model_summary_csv  # noqa: E402
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    value = str(value).strip().lower()
+    if value in ("1", "true", "yes", "y", "on"):
+        return True
+    if value in ("0", "false", "no", "n", "off"):
+        return False
+    return default
+
+
 # ---------------------------------------------------------------------------
 # 配置解析
 # ---------------------------------------------------------------------------
@@ -558,7 +570,10 @@ def main(argv: list[str] | None = None) -> int:
     write_mean_comparison_csv(all_rows, mean_csv, coco_metrics=all_coco_metrics)
     print(f"✅ 均值对比CSV: {mean_csv}")
 
-    plot_comparison(mean_csv, args.out_dir)
+    if _env_flag("BL_COMPARE_SAVE_PLOTS", True):
+        plot_comparison(mean_csv, args.out_dir)
+    else:
+        print("BL_COMPARE_SAVE_PLOTS=0: skip comparison_bar.png")
 
     try:
         write_geometry_summaries(args.out_dir)

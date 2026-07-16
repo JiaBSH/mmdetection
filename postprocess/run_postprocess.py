@@ -59,7 +59,7 @@ from postprocess.analyze_main_dy2 import (  # noqa: E402
 from postprocess.sliding_window_infer import (  # noqa: E402
     infer_image_with_overlap_windows,
 )
-from postprocess._shared import _to_numpy, _build_overlay
+from postprocess._shared import _env_flag, _to_numpy, _build_overlay
 
 # ---------------------------------------------------------------------------
 # 推理单张图（MMDetection inference API）
@@ -376,7 +376,7 @@ def process_one_image(
     # 2) 构建overlay
     mask_alpha = int(os.getenv("BL_MASK_ALPHA", "160"))
     overlayed = _build_overlay(pil_img, instances, mask_alpha=mask_alpha)
-    if sliding_window:
+    if sliding_window and _env_flag("BL_GEOM_SAVE_IMAGES", True):
         try:
             _save_sliding_window_visualization(
                 overlayed,

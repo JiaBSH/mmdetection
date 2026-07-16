@@ -20,6 +20,18 @@ from ._pixel_metrics import (
 )
 
 
+def _env_flag(name: str, default: bool) -> bool:
+    value = os.getenv(name)
+    if value is None:
+        return default
+    value = str(value).strip().lower()
+    if value in ("1", "true", "yes", "y", "on"):
+        return True
+    if value in ("0", "false", "no", "n", "off"):
+        return False
+    return default
+
+
 def Compute_metrics(
     method,
     orig_image,
@@ -46,6 +58,12 @@ def Compute_metrics(
     :return: dict {"IoU": ..., "Precision": ..., "Recall": ..., "F1-score": ...}
     """
     os.makedirs(save_dir, exist_ok=True)
+    save_visualization = save_visualization and _env_flag(
+        "BL_METRICS_SAVE_VISUALIZATION",
+        True,
+    )
+    save_metrics = save_metrics and _env_flag("BL_METRICS_SAVE_TEXT", True)
+    save_bar = save_bar and _env_flag("BL_METRICS_SAVE_BAR", True)
 
     # 1) GT 掩膜
     mask_gt = build_gt_mask_from_json(json_path, image_size, exclude_bg=True)

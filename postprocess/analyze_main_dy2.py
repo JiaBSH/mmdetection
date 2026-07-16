@@ -1590,15 +1590,15 @@ def analyze_domain_geometry(
         if poly is not None and len(poly) >= 3:
             all_polygons.append(poly)
 
-    # 叠加可视化
-    draw_polygons_overlay(
-        overlayed,
-        all_polygons,
-        save_path=os.path.join(save_dir, "polygons_overlay.png"),
-        outline="orange",
-        width=0,
-        draw_hull_points=False
-    )
+    if enable_save_images:
+        draw_polygons_overlay(
+            overlayed,
+            all_polygons,
+            save_path=os.path.join(save_dir, "polygons_overlay.png"),
+            outline="orange",
+            width=0,
+            draw_hull_points=False
+        )
 
     # 原始预测多边形
     all_pred_polygons = [inst["coords"] for inst in global_instances if len(inst["coords"]) >= 3]
@@ -1651,19 +1651,23 @@ def analyze_domain_geometry(
         for row in summary:
             writer.writerow(row)
 
-    # ---------- 画图 ----------
     methods = [r["Method"] for r in summary]
     ious = [r["IoU"] for r in summary]
     precisions = [r["Precision"] for r in summary]
     recalls = [r["Recall"] for r in summary]
     f1_scores = [r["F1-score"] for r in summary]
 
-    zlplot(methods, ious, "IoU", save_dir, "metrics_summary_IoU.png")
-    zlplot(methods, precisions, "Precision", save_dir, "metrics_summary_Precision.png")
-    zlplot(methods, recalls, "Recall", save_dir, "metrics_summary_Recall.png")
-    zlplot(methods, f1_scores, "F1-score", save_dir, "metrics_summary_F1.png")
+    # ---------- 画图 ----------
+    if enable_save_images:
+        zlplot(methods, ious, "IoU", save_dir, "metrics_summary_IoU.png")
+        zlplot(methods, precisions, "Precision", save_dir, "metrics_summary_Precision.png")
+        zlplot(methods, recalls, "Recall", save_dir, "metrics_summary_Recall.png")
+        zlplot(methods, f1_scores, "F1-score", save_dir, "metrics_summary_F1.png")
 
     print("📑 已保存方法对比表：", summary_csv)
-    print("📊 已保存所有指标柱状图到：", save_dir)
+    if enable_save_images:
+        print("📊 已保存所有指标柱状图到：", save_dir)
+    else:
+        print("ℹ️ enable_save_images=False: skip metric summary PNGs")
     print("✅ 所有评估完成！")
     return ious, precisions, recalls, f1_scores, pred_count, gt_count, pred_coverage, gt_coverage
