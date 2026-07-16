@@ -115,8 +115,24 @@ def _infer_one_image(
     batch_size: int = 1,
 ) -> tuple[list[dict], Image.Image, list[dict], list[dict]]:
     """推理单张图，返回 (global_instances, PIL_image_RGB)。"""
-    from mmdet.apis import inference_detector  # type: ignore
     import numpy as np
+
+    custom_infer = getattr(model, "infer_postprocess_instances", None)
+    if callable(custom_infer):
+        return custom_infer(
+            img_path,
+            score_thresh=score_thresh,
+            target_label=target_label,
+            min_pixel_count=min_pixel_count,
+            device=device,
+            sliding_window=sliding_window,
+            patch_size=patch_size,
+            patch_overlap_ratio=patch_overlap_ratio,
+            batch_size=batch_size,
+        )
+
+    from mmdet.apis import inference_detector  # type: ignore
+
     pil_img = Image.open(img_path).convert("RGB")
 
     if not sliding_window:
