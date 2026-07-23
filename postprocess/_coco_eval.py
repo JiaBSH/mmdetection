@@ -122,10 +122,47 @@ class COCOResultCollector:
 # COCO 评估
 # ---------------------------------------------------------------------------
 
+def _mean_coco_precision(
+    coco_eval: Any,
+    *,
+    max_dets: int,
+    iou_threshold: float | None = None,
+    area_label: str = "all",
+) -> float:
+    """Read AP directly from COCOeval tensors without its maxDets=100 summary."""
+    precision = coco_eval.eval["precision"]
+    params = coco_eval.params
+
+    area_indices = [
+        index
+        for index, label in enumerate(params.areaRngLbl)
+        if label == area_label
+    ]
+    max_det_indices = [
+        index
+        for index, value in enumerate(params.maxDets)
+        if int(value) == int(max_dets)
+    ]
+    if not area_indices or not max_det_indices:
+        return -1.0
+
+    if iou_threshold is not None:
+        iou_indices = np.flatnonzero(
+            np.isclose(params.iouThrs, iou_threshold)
+        )
+        precision = precision[iou_indices]
+
+    precision = precision[:, :, :, area_indices, max_det_indices]
+    valid = precision[precision > -1]
+    return float(np.mean(valid)) if valid.size else -1.0
+
+
 def evaluate_coco_from_predictions(
     coco_predictions: list[dict[str, Any]],
     ann_file: str,
     metrics: list[str] | None = None,
+    image_ids: list[int] | None = None,
+    max_dets: int = 10000,
 ) -> dict[str, float]:
     """用 pycocotools 对收集的预测做 COCO 评估。
 
@@ -134,6 +171,10 @@ def evaluate_coco_from_predictions(
     coco_predictions : list[dict] — COCO 标准格式预测列表
     ann_file : str — COCO 标注 JSON 路径
     metrics : list[str] | None — 评估指标，默认 ["bbox", "segm"]
+    image_ids : list[int] | None — 本次实际参与推理的 COCO image_id。
+        未提供时兼容旧行为，仅评估预测结果中出现的图像。
+    max_dets : int — COCOeval 每张图最多参与评估的实例数。
+        密集颗粒图远超 COCO 默认的 100，因此默认使用 10000。
 
     Returns
     -------
@@ -144,30 +185,75 @@ def evaluate_coco_from_predictions(
 
     if metrics is None:
         metrics = ["bbox", "segm"]
+    if max_dets < 100:
+        raise ValueError(f"max_dets must be >= 100, got {max_dets}")
 
     coco_gt = COCO(ann_file)
-    coco_dt = coco_gt.loadRes(coco_predictions)
-
-    # 只评估有预测的图像（避免未提供图片的 GT 拉低指标）
-    pred_img_ids = list(coco_dt.imgToAnns.keys())
-    if not pred_img_ids:
+    valid_gt_ids = set(coco_gt.getImgIds())
+    if image_ids is None:
+        eval_img_ids = sorted({
+            int(pred["image_id"])
+            for pred in coco_predictions
+            if "image_id" in pred and int(pred["image_id"]) in valid_gt_ids
+        })
+    else:
+        eval_img_ids = sorted({
+            int(image_id)
+            for image_id in image_ids
+            if int(image_id) in valid_gt_ids
+        })
+    if not eval_img_ids:
         return {}
+
+    if coco_predictions:
+        coco_dt = coco_gt.loadRes(coco_predictions)
+    else:
+        # pycocotools.loadRes([]) cannot build an empty result set. Construct
+        # one explicitly so an evaluated image with zero detections scores 0.
+        coco_dt = COCO()
+        coco_dt.dataset = {
+            "images": [
+                image
+                for image in coco_gt.dataset.get("images", [])
+                if int(image["id"]) in eval_img_ids
+            ],
+            "categories": list(coco_gt.dataset.get("categories", [])),
+            "annotations": [],
+        }
+        coco_dt.createIndex()
 
     results: dict[str, float] = {}
     for metric in metrics:
         coco_eval = COCOeval(coco_gt, coco_dt, metric)
-        coco_eval.params.imgIds = pred_img_ids  # 限定评估范围
+        coco_eval.params.imgIds = eval_img_ids
+        coco_eval.params.maxDets = [1, 10, int(max_dets)]
         coco_eval.evaluate()
         coco_eval.accumulate()
-        coco_eval.summarize()
-        # stats: [AP, AP50, AP75, AP_s, AP_m, AP_l,
-        #         AR1, AR10, AR100, AR_s, AR_m, AR_l]
-        stats = coco_eval.stats
-        results[f"{metric}_mAP"] = float(stats[0])
-        results[f"{metric}_mAP_50"] = float(stats[1])
-        results[f"{metric}_mAP_75"] = float(stats[2])
-        results[f"{metric}_mAP_s"] = float(stats[3])
-        results[f"{metric}_mAP_m"] = float(stats[4])
-        results[f"{metric}_mAP_l"] = float(stats[5])
+        ap_values = {
+            f"{metric}_mAP": _mean_coco_precision(
+                coco_eval, max_dets=max_dets
+            ),
+            f"{metric}_mAP_50": _mean_coco_precision(
+                coco_eval, max_dets=max_dets, iou_threshold=0.50
+            ),
+            f"{metric}_mAP_75": _mean_coco_precision(
+                coco_eval, max_dets=max_dets, iou_threshold=0.75
+            ),
+            f"{metric}_mAP_s": _mean_coco_precision(
+                coco_eval, max_dets=max_dets, area_label="small"
+            ),
+            f"{metric}_mAP_m": _mean_coco_precision(
+                coco_eval, max_dets=max_dets, area_label="medium"
+            ),
+            f"{metric}_mAP_l": _mean_coco_precision(
+                coco_eval, max_dets=max_dets, area_label="large"
+            ),
+        }
+        results.update(ap_values)
+        print(
+            f" Average Precision ({metric}) "
+            f"@[ IoU=0.50:0.95 | area=all | maxDets={max_dets} ] "
+            f"= {ap_values[f'{metric}_mAP']:.3f}"
+        )
 
     return results

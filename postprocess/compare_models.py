@@ -205,6 +205,7 @@ def evaluate_model(
     patch_size: int = 1024,
     patch_overlap_ratio: float = 0.0,
     batch_size: int = 1,
+    coco_max_dets: int = 10000,
     verbose: bool = True,
 ) -> tuple[list[dict], dict[str, float]]:
     """对一个模型评估所有测试图，返回 (指标rows, COCO指标)。
@@ -230,6 +231,11 @@ def evaluate_model(
 
     # 建立 COCO image_id 映射 + 收集器
     image_id_map = _build_image_id_map(ann_file)
+    evaluated_image_ids = sorted({
+        image_id_map[img_name]
+        for _, img_name in img_list
+        if img_name in image_id_map
+    })
     coco_collector = COCOResultCollector()
 
     rows: list[dict] = []
@@ -291,13 +297,19 @@ def evaluate_model(
 
     # COCO 评估
     coco_metrics: dict[str, float] = {}
-    if len(coco_collector) > 0:
+    if evaluated_image_ids:
         try:
-            print(f"\n📐 COCO 评估: {model_name} ({len(coco_collector)} predictions)")
+            print(
+                f"\n📐 COCO 评估: {model_name} "
+                f"({len(evaluated_image_ids)} images, "
+                f"{len(coco_collector)} predictions)"
+            )
             coco_metrics = evaluate_coco_from_predictions(
                 coco_collector.to_coco_list(),
                 ann_file,
                 metrics=["bbox", "segm"],
+                image_ids=evaluated_image_ids,
+                max_dets=coco_max_dets,
             )
             # 保存
             coco_json_path = os.path.join(model_out_dir, "coco_metrics.json")
@@ -471,6 +483,8 @@ def main(argv: list[str] | None = None) -> int:
                    help="相邻滑窗交叠比例；0 为非交叠，>0 为交叠滑窗")
     p.add_argument("--batch-size", type=int, default=1,
                    help="滑窗推理 batch size")
+    p.add_argument("--coco-max-dets", type=int, default=10000,
+                   help="COCO bbox/segm AP 每张图最多评估的实例数")
     p.add_argument("--enable-plots",       action="store_true", default=False)
     p.add_argument("--enable-gt",          action="store_true", default=False)
     p.add_argument("--enable-gt-matching",  action="store_true", default=False,
@@ -548,6 +562,7 @@ def main(argv: list[str] | None = None) -> int:
                 patch_size=args.patch_size,
                 patch_overlap_ratio=args.patch_overlap_ratio,
                 batch_size=args.batch_size,
+                coco_max_dets=args.coco_max_dets,
             )
             all_rows.extend(rows)
             if coco_metrics:

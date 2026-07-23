@@ -87,6 +87,11 @@ def evaluate_sam3(
     )
 
     image_id_map = _build_image_id_map(args.ann_file)
+    evaluated_image_ids = sorted({
+        image_id_map[img_name]
+        for _, img_name in img_list
+        if img_name in image_id_map
+    })
     coco_collector = COCOResultCollector()
     rows: list[dict] = []
 
@@ -144,13 +149,19 @@ def evaluate_sam3(
         print(f"\n⚠️ {args.model_name}: 无有效指标")
 
     coco_metrics: dict[str, float] = {}
-    if len(coco_collector) > 0:
+    if evaluated_image_ids:
         try:
-            print(f"\n📐 COCO 评估: {args.model_name} ({len(coco_collector)} predictions)")
+            print(
+                f"\n📐 COCO 评估: {args.model_name} "
+                f"({len(evaluated_image_ids)} images, "
+                f"{len(coco_collector)} predictions)"
+            )
             coco_metrics = evaluate_coco_from_predictions(
                 coco_collector.to_coco_list(),
                 args.ann_file,
                 metrics=["bbox", "segm"],
+                image_ids=evaluated_image_ids,
+                max_dets=args.coco_max_dets,
             )
             coco_json_path = os.path.join(model_out_dir, "coco_metrics.json")
             with open(coco_json_path, "w", encoding="utf-8") as f:
@@ -187,6 +198,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--patch-size", type=int, default=1024)
     parser.add_argument("--patch-overlap-ratio", type=float, default=0.0)
     parser.add_argument("--batch-size", type=int, default=1)
+    parser.add_argument("--coco-max-dets", type=int, default=10000)
     parser.add_argument("--enable-plots", action="store_true", default=False)
     parser.add_argument("--enable-gt", action="store_true", default=False)
     parser.add_argument("--enable-gt-matching", action="store_true", default=False)
