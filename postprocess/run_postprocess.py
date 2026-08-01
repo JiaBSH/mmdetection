@@ -49,6 +49,10 @@ import traceback
 import numpy as np
 from PIL import Image
 
+# Allow very large images (e.g. whole-slide pathology scans) without
+# triggering Pillow's decompression-bomb protection.
+Image.MAX_IMAGE_PIXELS = None
+
 from postprocess.coco_utils import (  # noqa: E402
     load_coco_gt_polygons,
     mmdet_masks_to_instances,

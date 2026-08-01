@@ -1,0 +1,22 @@
+models:
+  - name: boxinst_r50_fpn_custom_coco_instance
+    config: boxinst_r50_fpn_custom_coco_instance/boxinst_r50_fpn_custom_coco_instance.py
+    checkpoint: boxinst_r50_fpn_custom_coco_instance/epoch_{epoch}.pth
+  - name: cascade-mask-rcnn_r50_fpn_1x_custom_coco_instance
+    config: cascade-mask-rcnn_r50_fpn_1x_custom_coco_instance/cascade-mask-rcnn_r50_fpn_1x_custom_coco_instance.py
+    checkpoint: cascade-mask-rcnn_r50_fpn_1x_custom_coco_instance/epoch_{epoch}.pth
+  - name: condinst_r50_fpn_custom_coco_instance
+    config: condinst_r50_fpn_custom_coco_instance/condinst_r50_fpn_custom_coco_instance.py
+    checkpoint: condinst_r50_fpn_custom_coco_instance/epoch_{epoch}.pth
+  - name: detectors_htc-r50_custom_coco_instance
+    config: detectors_htc-r50_custom_coco_instance/detectors_htc-r50_custom_coco_instance.py
+    checkpoint: detectors_htc-r50_custom_coco_instance/epoch_{epoch}.pth
+  - name: htc-without-semantic_r50_fpn_1x_custom_coco_instance
+    config: htc-without-semantic_r50_fpn_1x_custom_coco_instance/htc-without-semantic_r50_fpn_1x_custom_coco_instance.py
+    checkpoint: htc-without-semantic_r50_fpn_1x_custom_coco_instance/epoch_{epoch}.pth
+  - name: mask2former_r50_custom_coco_instance
+    config: mask2former_r50_custom_coco_instance/mask2former_r50_custom_coco_instance.py
+    checkpoint: mask2former_r50_custom_coco_instance/epoch_{epoch}.pth
+  - name: mask-rcnn_r50_fpn_1x_custom_coco_instance
+    config: mask-rcnn_r50_fpn_1x_custom_coco_instance/mask-rcnn_r50_fpn_1x_custom_coco_instance.py
+    checkpoint: mask-rcnn_r50_fpn_1x_custom_coco_instance/epoch_{epoch}.pth

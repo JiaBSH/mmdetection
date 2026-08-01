@@ -1,0 +1,12 @@
+models:
+  - name: detectors_htc-r50_custom_coco_instance
+    config: detectors_htc-r50_custom_coco_instance/detectors_htc-r50_custom_coco_instance.py
+    checkpoint: detectors_htc-r50_custom_coco_instance/epoch_{epoch}.pth
+  - name: mask-rcnn_r50_fpn_1x_custom_coco_instance
+    config: mask-rcnn_r50_fpn_1x_custom_coco_instance/mask-rcnn_r50_fpn_1x_custom_coco_instance.py
+    checkpoint: mask-rcnn_r50_fpn_1x_custom_coco_instance/epoch_{epoch}.pth
+  - name: point-rend_r50-caffe_fpn_custom_coco_instance
+    config: point-rend_r50-caffe_fpn_custom_coco_instance/point-rend_r50-caffe_fpn_custom_coco_instance.py
+    checkpoint: point-rend_r50-caffe_fpn_custom_coco_instance/epoch_{epoch}.pth
+
+

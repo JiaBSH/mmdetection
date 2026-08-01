@@ -42,16 +42,17 @@ cd /data/home/scvi576/run/JiaBSH/mmdetection_para
 echo "===== test_set_1024 多模型测评 ====="
 
 # ── 基本路径 ──────────────────────────────────────────────────────────────────
-MODEL_ROOT="${MODEL_ROOT:-work_dirs/run_isat}"
+MODEL_ROOT="${MODEL_ROOT:-work_dirs/run_syn_rotation}"
 CHECKPOINT_EPOCH="${CHECKPOINT_EPOCH:-}"
-OUT_ROOT="${OUT_ROOT:-outputs/run_isat}"
+OUT_ROOT="${OUT_ROOT:-outputs/run_syn_gag_image_all}"
 
 # ── 滑窗/推理参数 ────────────────────────────────────────────────────────────
-PATCH_SIZE="${PATCH_SIZE:-600}"
-PATCH_OVERLAP_RATIO="${PATCH_OVERLAP_RATIO:-0.1}"
+PATCH_SIZE="${PATCH_SIZE:-400}"
+PATCH_OVERLAP_RATIO="${PATCH_OVERLAP_RATIO:-0.15}"
 BATCH_SIZE="${BATCH_SIZE:-4}"
 SCORE_THRESH="${SCORE_THRESH:-0.5}"
-MERGE_OVERLAP_RATIO="${MERGE_OVERLAP_RATIO:-0.5}"
+MERGE_OVERLAP_RATIO="${MERGE_OVERLAP_RATIO:-0.3}"
+COCO_MAX_DETS="${COCO_MAX_DETS:-10000}"
 
 # ── 功能开关（0=关闭, 1=开启）────────────────────────────────────────────────
 ENABLE_GT="${ENABLE_GT:-1}"                  # GT 几何分析（取向/尺寸）
@@ -83,9 +84,10 @@ run_compare() {
         --ann-file "${ann_file}"
         --img-dir "${img_dir}"
         --out-dir "${out_dir}"
-        --model-cfg postprocess/test_list.yaml
+        --model-cfg postprocess/model_list2.yaml
         --model-root "${MODEL_ROOT}"
         --score-thresh "${SCORE_THRESH}"
+        --coco-max-dets "${COCO_MAX_DETS}"
         --device cuda:0
     )
 
@@ -120,10 +122,10 @@ run_compare() {
     python postprocess/compare_models.py "${compare_args[@]}"
 }
 run_compare \
-    "2_5x_plain_isat" \
-    "dataset_root/mmdata_test/annotations/instances_2_5x_unsup.json" \
-    "dataset_root/mmdata_test/2_5x_unsup/image" \
-    "plain"
+    "syn_2_5x_old2sliding_boundary_all" \
+    "data/syn_multimag/coco_rotation/test2_5_t1/instances_test.json" \
+    "data/syn_multimag/coco_rotation/test2_5_t1/images" \
+    "sliding"
 
 # ---- old tests (heredoc skip) ----
 : <<'SKIP'
