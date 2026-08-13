@@ -50,8 +50,8 @@ def _effective_overlap_pixels(
     context_margin: int,
 ) -> tuple[int, int]:
     requested = _overlap_pixels(patch_size, patch_overlap_ratio)
-    required = min(patch_size - 1, 2 * max(context_margin, 0))
-    return requested, max(requested, required)
+    # Context metadata must not override the user-requested window overlap.
+    return requested, requested
 
 
 def _edge_touch_margin_pixels(patch_size: int, context_margin: int) -> int:
