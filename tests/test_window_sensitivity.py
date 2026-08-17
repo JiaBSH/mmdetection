@@ -196,6 +196,13 @@ class WindowSensitivityTest(unittest.TestCase):
             )
             self.assertIn(text, output)
 
+    def test_array_launcher_uses_cluster_managed_memory(self):
+        script = Path(__file__).resolve().parents[1] / "postprocess" / (
+            "run_2p5x_window_sensitivity_array.sh"
+        )
+        text = script.read_text(encoding="utf-8")
+        self.assertNotIn("#SBATCH --mem=", text)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -4,7 +4,6 @@
 #SBATCH -N 1
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=4
-#SBATCH --mem=32G
 #SBATCH --time=06:00:00
 #SBATCH --array=0-24%4
 #SBATCH --output=logs/window_sensitivity_%A_%a.out
