@@ -1,4 +1,6 @@
 import json
+import os
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -168,6 +170,31 @@ class WindowSensitivityTest(unittest.TestCase):
         expected.add("window_sensitivity_combined.png")
         expected.add("window_sensitivity_combined.svg")
         self.assertEqual(actual, expected)
+
+    def test_array_launcher_maps_selected_indices(self):
+        script = Path(__file__).resolve().parents[1] / "postprocess" / (
+            "run_2p5x_window_sensitivity_array.sh"
+        )
+        expected = {
+            0: "patch_size=192 overlap_ratio=0.00",
+            7: "patch_size=256 overlap_ratio=0.15",
+            12: "patch_size=320 overlap_ratio=0.15",
+            24: "patch_size=512 overlap_ratio=0.30",
+        }
+        for task_id, text in expected.items():
+            environment = os.environ.copy()
+            environment.update(
+                {
+                    "DRY_RUN": "1",
+                    "SLURM_ARRAY_TASK_ID": str(task_id),
+                }
+            )
+            output = subprocess.check_output(
+                ["bash", str(script)],
+                env=environment,
+                text=True,
+            )
+            self.assertIn(text, output)
 
 
 if __name__ == "__main__":
