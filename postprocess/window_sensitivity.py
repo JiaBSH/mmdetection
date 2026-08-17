@@ -21,11 +21,14 @@ WINDOW_SIZES = (192, 256, 320, 400, 512)
 OVERLAP_RATIOS = (0.0, 0.10, 0.15, 0.20, 0.30)
 
 
-def parameter_grid() -> list[tuple[int, float]]:
+def parameter_grid(
+    window_sizes: tuple[int, ...] = WINDOW_SIZES,
+    overlap_ratios: tuple[float, ...] = OVERLAP_RATIOS,
+) -> list[tuple[int, float]]:
     return [
         (size, overlap)
-        for size in WINDOW_SIZES
-        for overlap in OVERLAP_RATIOS
+        for size in window_sizes
+        for overlap in overlap_ratios
     ]
 
 
@@ -212,13 +215,11 @@ def evaluate_configuration(
 
 
 def _validated_grid_cell(patch_size: int, overlap_ratio: float) -> None:
-    if patch_size not in WINDOW_SIZES:
+    if patch_size < 1:
+        raise ValueError(f"patch_size must be positive, got {patch_size}")
+    if not 0.0 <= overlap_ratio < 1.0:
         raise ValueError(
-            f"patch_size must be one of {WINDOW_SIZES}, got {patch_size}"
-        )
-    if not any(abs(overlap_ratio - value) < 1e-12 for value in OVERLAP_RATIOS):
-        raise ValueError(
-            f"overlap_ratio must be one of {OVERLAP_RATIOS}, got {overlap_ratio}"
+            f"overlap_ratio must be in [0, 1), got {overlap_ratio}"
         )
 
 

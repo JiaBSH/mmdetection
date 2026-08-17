@@ -4,7 +4,7 @@
 
 **Goal:** Run a common coarse-to-fine sliding-window grid on four 2.5× images and produce six directly comparable metric heatmaps.
 
-**Architecture:** Keep the existing one-image evaluator as the only inference path. A 64-cell Slurm array loops over four image names and writes 256 compact JSON files. The plotter verifies four-image completeness, averages each metric, reports dispersion and checks boundaries before any fine-grid run.
+**Architecture:** Keep the existing one-image evaluator as the only inference path. A 70-cell coarse grid writes 280 compact JSON records; 20 exact pilot records are reused and only 260 are inferred. Thirteen Slurm tasks each process five or six strided cells, leaving room for the three existing account jobs under the 16-job limit. The plotter verifies four-image completeness, averages each metric, reports dispersion and checks boundaries before any fine-grid run.
 
 **Tech Stack:** Python 3.10, NumPy, Matplotlib, MMDetection, pycocotools, Bash, Slurm, unittest.
 
@@ -20,13 +20,13 @@
 - [ ] **Step 1: Write failing tests for explicit axes**
 
 ```python
-COARSE_SIZES = (128, 160, 192, 224, 256, 320, 400, 512)
-COARSE_OVERLAPS = (0.05, 0.10, 0.15, 0.20, 0.25, 0.30, 0.40, 0.50)
+COARSE_SIZES = (96, 128, 160, 192, 256, 320, 400, 512, 640, 768)
+COARSE_OVERLAPS = (0.05, 0.10, 0.15, 0.20, 0.30, 0.45, 0.60)
 
 def test_parameter_grid_accepts_explicit_axes(self):
     grid = parameter_grid(COARSE_SIZES, COARSE_OVERLAPS)
-    self.assertEqual(len(grid), 64)
-    self.assertEqual(len(set(grid)), 64)
+    self.assertEqual(len(grid), 70)
+    self.assertEqual(len(set(grid)), 70)
 ```
 
 - [ ] **Step 2: Run the test and confirm failure**
@@ -62,19 +62,21 @@ git add postprocess/window_sensitivity.py postprocess/plot_window_sensitivity.py
 git commit -m "Generalize window sensitivity grid axes"
 ```
 
-### Task 2: Add the four-image coarse-grid launcher
+### Task 2: Add pilot reuse and the four-image coarse-grid launcher
 
 **Files:**
 - Create: `postprocess/run_2p5x_window_sensitivity_coarse_array.sh`
+- Create: `postprocess/reuse_2p5x_pilot_results.py`
 - Modify: `tests/test_window_sensitivity.py`
 
 - [ ] **Step 1: Write a failing mapping test**
 
 ```python
-def test_coarse_launcher_maps_cell_and_four_images(self):
-    env = {**os.environ, "DRY_RUN": "1", "SLURM_ARRAY_TASK_ID": "19"}
+def test_coarse_launcher_maps_strided_cells_and_four_images(self):
+    env = {**os.environ, "DRY_RUN": "1", "SLURM_ARRAY_TASK_ID": "1"}
     out = subprocess.check_output(["bash", str(script)], env=env, text=True)
-    self.assertIn("patch_size=192 overlap_ratio=0.20", out)
+    self.assertIn("cell_id=1 patch_size=96 overlap_ratio=0.10", out)
+    self.assertIn("cell_id=66 patch_size=768 overlap_ratio=0.20", out)
     for name in ("2p5x_00016.png", "2p5x_00017.png",
                  "2p5x_00018.png", "2p5x_00019.png"):
         self.assertIn(name, out)
@@ -86,18 +88,19 @@ Run: `python -m unittest discover -s tests -p 'test_window_sensitivity.py' -v`
 
 Expected: FAIL because the launcher is absent.
 
-- [ ] **Step 3: Implement 64-cell mapping and the four-image loop**
+- [ ] **Step 3: Implement validated reuse, 70-cell mapping and the four-image loop**
 
 ```bash
-WINDOW_SIZES=(128 160 192 224 256 320 400 512)
-OVERLAP_RATIOS=(0.05 0.10 0.15 0.20 0.25 0.30 0.40 0.50)
+WINDOW_SIZES=(96 128 160 192 256 320 400 512 640 768)
+OVERLAP_RATIOS=(0.05 0.10 0.15 0.20 0.30 0.45 0.60)
 IMAGES=(2p5x_00016.png 2p5x_00017.png 2p5x_00018.png 2p5x_00019.png)
-GLOBAL_ID=$(( ${TASK_OFFSET:-0} + ${SLURM_ARRAY_TASK_ID:-0} ))
-SIZE_INDEX=$((GLOBAL_ID / 8))
-OVERLAP_INDEX=$((GLOBAL_ID % 8))
+for ((CELL_ID=${SLURM_ARRAY_TASK_ID:-0}; CELL_ID<70; CELL_ID+=13)); do
+    SIZE_INDEX=$((CELL_ID / 7))
+    OVERLAP_INDEX=$((CELL_ID % 7))
+done
 ```
 
-For each image invoke `window_sensitivity.py` with unchanged evaluation settings and write `raw/window_0128_overlap_0p05/2p5x_00016.json`. Use cluster-managed memory and at most four concurrent GPU tasks.
+The reuse helper must validate image name, size, overlap, model name and checkpoint before copying the 20 intersecting pilot JSON files into the new tree. For each missing image invoke `window_sensitivity.py` with unchanged settings and write `raw/window_0096_overlap_0p05/2p5x_00016.json`. Existing valid outputs are skipped. Use cluster-managed memory and at most four concurrent GPU tasks.
 
 - [ ] **Step 4: Verify mapping and shell syntax**
 
@@ -108,7 +111,7 @@ Expected: syntax check and all tests PASS.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add postprocess/run_2p5x_window_sensitivity_coarse_array.sh tests/test_window_sensitivity.py
+git add postprocess/run_2p5x_window_sensitivity_coarse_array.sh postprocess/reuse_2p5x_pilot_results.py tests/test_window_sensitivity.py
 git commit -m "Add four-image coarse window grid launcher"
 ```
 
@@ -163,35 +166,33 @@ git add postprocess/plot_window_sensitivity.py tests/test_window_sensitivity.py
 git commit -m "Aggregate four-image window sensitivity results"
 ```
 
-### Task 4: Execute and validate the common 8×8 coarse grid
+### Task 4: Execute and validate the common 10×7 coarse grid
 
 **Files:**
 - Generate: `outputs/dino_window_supplement/04_window_sensitivity_2p5x_coarse/`
 
-- [ ] **Step 1: Submit scheduler-safe waves**
+- [ ] **Step 1: Reuse exact pilot cells and submit one scheduler-safe array**
 
-Run one wave at a time, waiting for completion:
+Run:
 
 ```bash
-sbatch --array=0-15%4 --export=ALL,TASK_OFFSET=0 postprocess/run_2p5x_window_sensitivity_coarse_array.sh
-sbatch --array=0-15%4 --export=ALL,TASK_OFFSET=16 postprocess/run_2p5x_window_sensitivity_coarse_array.sh
-sbatch --array=0-15%4 --export=ALL,TASK_OFFSET=32 postprocess/run_2p5x_window_sensitivity_coarse_array.sh
-sbatch --array=0-15%4 --export=ALL,TASK_OFFSET=48 postprocess/run_2p5x_window_sensitivity_coarse_array.sh
+python postprocess/reuse_2p5x_pilot_results.py --source .../03_window_sensitivity_2p5x_single/raw --destination .../04_window_sensitivity_2p5x_coarse/raw
+sbatch --array=0-12%4 postprocess/run_2p5x_window_sensitivity_coarse_array.sh
 ```
 
-Expected: all array tasks end `COMPLETED 0:0`.
+Expected at submission: `reused=20`, 13 array tasks accepted, at most four running. Final expected state: all tasks `COMPLETED 0:0`.
 
 - [ ] **Step 2: Validate raw records before plotting**
 
 Run the aggregation CLI with `--validate-only`.
 
-Expected: `cells=64 images_per_cell=4 records=256 finite_metrics=yes`.
+Expected: `cells=70 images_per_cell=4 records=280 reused=20 finite_metrics=yes`.
 
 - [ ] **Step 3: Generate only approved summaries and heatmaps**
 
-Run `plot_window_sensitivity.py --mode multimage` with the eight window sizes, eight overlap ratios and four expected image names from the design.
+Run `plot_window_sensitivity.py --mode multimage` with the ten window sizes, seven overlap ratios and four expected image names from the design.
 
-Expected: 64 mean rows, six common-axis heatmaps, one combined figure and a six-metric boundary report.
+Expected: 70 mean rows, six common-axis heatmaps, one combined figure and a six-metric boundary report.
 
 - [ ] **Step 4: Stop at the coarse-result checkpoint**
 

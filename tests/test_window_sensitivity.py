@@ -1,15 +1,18 @@
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 
 import numpy as np
+import postprocess.plot_window_sensitivity as plot_sensitivity
 
 from postprocess.window_sensitivity import (
     OVERLAP_RATIOS,
     WINDOW_SIZES,
+    _validated_grid_cell,
     build_prediction_union_mask,
     normalize_result,
     parameter_grid,
@@ -24,6 +27,19 @@ from postprocess.plot_window_sensitivity import (
 
 
 class WindowSensitivityTest(unittest.TestCase):
+    def test_expanded_grid_cells_are_valid(self):
+        _validated_grid_cell(96, 0.60)
+        _validated_grid_cell(768, 0.05)
+
+    def test_parameter_grid_accepts_explicit_axes(self):
+        sizes = (96, 128, 160, 192, 256, 320, 400, 512, 640, 768)
+        overlaps = (0.05, 0.10, 0.15, 0.20, 0.30, 0.45, 0.60)
+        grid = parameter_grid(sizes, overlaps)
+        self.assertEqual(len(grid), 70)
+        self.assertEqual(len(set(grid)), 70)
+        self.assertEqual(grid[0], (96, 0.05))
+        self.assertEqual(grid[-1], (768, 0.60))
+
     def test_parameter_grid_has_25_unique_cells(self):
         grid = parameter_grid()
         self.assertEqual(WINDOW_SIZES, (192, 256, 320, 400, 512))
@@ -121,6 +137,37 @@ class WindowSensitivityTest(unittest.TestCase):
                 encoding="utf-8",
             )
 
+    def _write_multimage_grid(self, root, sizes, overlaps, images):
+        for size, overlap in parameter_grid(sizes, overlaps):
+            cell_dir = root / Path(result_filename(size, overlap)).stem
+            cell_dir.mkdir(parents=True, exist_ok=True)
+            for image_index, image in enumerate(images):
+                value = size / 1000.0 + overlap + image_index / 100.0
+                payload = {
+                    "patch_size": size,
+                    "overlap_ratio": overlap,
+                    "image": image,
+                    "image_id": image_index + 1,
+                    "model_name": "detectors_htc-r50_custom_coco_instance",
+                    "checkpoint": "epoch_17.pth",
+                    "bbox_mAP": value,
+                    "bbox_mAP_50": value,
+                    "bbox_mAP_75": value,
+                    "segm_mAP": value,
+                    "segm_mAP_50": value,
+                    "segm_mAP_75": value,
+                    "pixel_precision": value,
+                    "pixel_recall": value,
+                    "pixel_f1": value,
+                    "pixel_iou": value,
+                    "inference_seconds": 1.0,
+                    "instance_count": 10,
+                    "window_count": 20,
+                }
+                (cell_dir / f"{Path(image).stem}.json").write_text(
+                    json.dumps(payload), encoding="utf-8"
+                )
+
     def test_grid_loader_returns_deterministic_complete_rows(self):
         with tempfile.TemporaryDirectory() as temporary_dir:
             root = Path(temporary_dir)
@@ -202,6 +249,152 @@ class WindowSensitivityTest(unittest.TestCase):
         )
         text = script.read_text(encoding="utf-8")
         self.assertNotIn("#SBATCH --mem=", text)
+
+    def test_coarse_launcher_maps_strided_cells_and_four_images(self):
+        script = Path(__file__).resolve().parents[1] / "postprocess" / (
+            "run_2p5x_window_sensitivity_coarse_array.sh"
+        )
+        environment = os.environ.copy()
+        environment.update({"DRY_RUN": "1", "SLURM_ARRAY_TASK_ID": "1"})
+        output = subprocess.check_output(
+            ["bash", str(script)], env=environment, text=True
+        )
+        self.assertIn("cell_id=1 patch_size=96 overlap_ratio=0.10", output)
+        self.assertIn("cell_id=66 patch_size=768 overlap_ratio=0.20", output)
+        for image in (
+            "2p5x_00016.png",
+            "2p5x_00017.png",
+            "2p5x_00018.png",
+            "2p5x_00019.png",
+        ):
+            self.assertIn(image, output)
+
+    def test_reuse_helper_copies_only_20_exact_pilot_records(self):
+        script = Path(__file__).resolve().parents[1] / "postprocess" / (
+            "reuse_2p5x_pilot_results.py"
+        )
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            source = root / "source"
+            destination = root / "destination"
+            source.mkdir()
+            self._write_complete_grid(source)
+            output = subprocess.check_output(
+                [
+                    "python",
+                    str(script),
+                    "--source",
+                    str(source),
+                    "--destination",
+                    str(destination),
+                ],
+                text=True,
+            )
+            copied = sorted(destination.rglob("*.json"))
+            payloads = [json.loads(path.read_text()) for path in copied]
+        self.assertIn("reused=20", output)
+        self.assertEqual(len(copied), 20)
+        self.assertTrue(all(row["image"] == "2p5x_00016.png" for row in payloads))
+        self.assertTrue(all("reused_from" in row for row in payloads))
+
+    def test_multimage_loader_requires_four_images_and_aggregates(self):
+        sizes = (96, 128)
+        overlaps = (0.05, 0.10)
+        images = tuple(f"2p5x_{number:05d}.png" for number in range(16, 20))
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            raw = Path(temporary_dir)
+            self._write_multimage_grid(raw, sizes, overlaps, images)
+            per_image, means = plot_sensitivity.load_multimage_grid_results(
+                raw, sizes, overlaps, images
+            )
+            next(raw.rglob("2p5x_00019.json")).unlink()
+            with self.assertRaisesRegex(ValueError, "four images"):
+                plot_sensitivity.load_multimage_grid_results(
+                    raw, sizes, overlaps, images
+                )
+        self.assertEqual(len(per_image), 16)
+        self.assertEqual(len(means), 4)
+        first = means[0]
+        self.assertAlmostEqual(first["segm_mAP"], 0.161)
+        self.assertGreater(first["segm_mAP_std"], 0.0)
+        self.assertEqual(first["image_count"], 4)
+
+    def test_metric_peak_report_flags_boundary_per_metric(self):
+        sizes = (96, 128, 160)
+        overlaps = (0.05, 0.10, 0.15)
+        rows = []
+        for row_index, size in enumerate(sizes):
+            for column_index, overlap in enumerate(overlaps):
+                row = {"patch_size": size, "overlap_ratio": overlap}
+                for metric, _label in HEATMAP_METRICS:
+                    row[metric] = 1.0 - abs(row_index - 1) - abs(column_index - 1)
+                row["segm_mAP"] = float(row_index + column_index)
+                rows.append(row)
+        report = plot_sensitivity.find_metric_peaks(rows, sizes, overlaps)
+        self.assertTrue(report["segm_mAP"]["on_boundary"])
+        self.assertFalse(report["pixel_f1"]["on_boundary"])
+        self.assertEqual(report["pixel_f1"]["patch_size"], 128)
+        self.assertEqual(report["pixel_f1"]["overlap_ratio"], 0.10)
+
+    def test_multimage_outputs_are_exactly_the_approved_17_files(self):
+        sizes = (96, 128)
+        overlaps = (0.05, 0.10)
+        images = tuple(f"2p5x_{number:05d}.png" for number in range(16, 20))
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            raw = root / "raw"
+            output = root / "figures"
+            raw.mkdir()
+            self._write_multimage_grid(raw, sizes, overlaps, images)
+            per_image, means = plot_sensitivity.load_multimage_grid_results(
+                raw, sizes, overlaps, images
+            )
+            plot_sensitivity.write_multimage_outputs(
+                per_image, means, output, sizes, overlaps
+            )
+            actual = {path.name for path in output.iterdir() if path.is_file()}
+        expected = {"summary_per_image.csv", "summary_mean.csv", "summary.json"}
+        for metric, _label in HEATMAP_METRICS:
+            expected.update(
+                {f"window_sensitivity_{metric}.png", f"window_sensitivity_{metric}.svg"}
+            )
+        expected.update(
+            {"window_sensitivity_combined.png", "window_sensitivity_combined.svg"}
+        )
+        self.assertEqual(actual, expected)
+
+    def test_multimage_cli_validates_without_writing_outputs(self):
+        sizes = (96, 128)
+        overlaps = (0.05, 0.10)
+        images = tuple(f"2p5x_{number:05d}.png" for number in range(16, 20))
+        script = Path(__file__).resolve().parents[1] / "postprocess" / (
+            "plot_window_sensitivity.py"
+        )
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            raw = Path(temporary_dir) / "raw"
+            raw.mkdir()
+            self._write_multimage_grid(raw, sizes, overlaps, images)
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    str(script),
+                    "--mode",
+                    "multimage",
+                    "--validate-only",
+                    "--raw-dir",
+                    str(raw),
+                    "--window-sizes",
+                    "96",
+                    "128",
+                    "--overlap-ratios",
+                    "0.05",
+                    "0.10",
+                    "--expected-images",
+                    *images,
+                ],
+                text=True,
+            )
+        self.assertIn("cells=4 images_per_cell=4 records=16", output)
 
 
 if __name__ == "__main__":
