@@ -269,6 +269,18 @@ class WindowSensitivityTest(unittest.TestCase):
         ):
             self.assertIn(image, output)
 
+    def test_coarse_launcher_uses_complete_coco_image_directory(self):
+        script = Path(__file__).resolve().parents[1] / "postprocess" / (
+            "run_2p5x_window_sensitivity_coarse_array.sh"
+        )
+        text = script.read_text(encoding="utf-8")
+        self.assertIn(
+            'data/syn_multimag/coco_rotation/images/test/${IMAGE_NAME}', text
+        )
+        self.assertNotIn(
+            'data/syn_multimag/coco_rotation/test2_5_t1/images/${IMAGE_NAME}', text
+        )
+
     def test_reuse_helper_copies_only_20_exact_pilot_records(self):
         script = Path(__file__).resolve().parents[1] / "postprocess" / (
             "reuse_2p5x_pilot_results.py"

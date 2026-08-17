@@ -72,7 +72,7 @@ for ((CELL_ID=TASK_ID; CELL_ID<70; CELL_ID+=13)); do
         fi
         python -u postprocess/window_sensitivity.py \
             --ann-file data/syn_multimag/coco_rotation/test2_5_t1/instances_test.json \
-            --image "data/syn_multimag/coco_rotation/test2_5_t1/images/${IMAGE_NAME}" \
+            --image "data/syn_multimag/coco_rotation/images/test/${IMAGE_NAME}" \
             --model-config work_dirs/run_syn_rotation/detectors_htc-r50_custom_coco_instance/detectors_htc-r50_custom_coco_instance.py \
             --checkpoint work_dirs/run_syn_rotation/detectors_htc-r50_custom_coco_instance/epoch_17.pth \
             --model-name detectors_htc-r50_custom_coco_instance \
