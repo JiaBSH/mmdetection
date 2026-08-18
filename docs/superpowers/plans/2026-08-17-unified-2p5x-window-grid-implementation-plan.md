@@ -206,7 +206,7 @@ Do not start fine-grid inference. Report each metric's peak, boundary status and
 
 - [ ] **Step 1: Derive one shared fine range**
 
-Take the union of all non-boundary coarse peaks, add one coarse neighbor on each side, then enumerate window sizes at 32 px steps and overlaps at 0.05 steps. If any peak is on a boundary, expand the common coarse grid first.
+The coarse peaks span 128–400 px and overlap 0.20–0.60. Use one shared fine grid with margins: window sizes `96, 128, 160, 192, 224, 256, 288, 320, 352, 384, 400, 416, 448` and overlap ratios `0.10, 0.15, ..., 0.70`. This is 13×13×4 = 676 records. Reuse the 168 exact coarse-grid records and infer only 508 missing records.
 
 - [ ] **Step 2: Add and run launcher tests**
 

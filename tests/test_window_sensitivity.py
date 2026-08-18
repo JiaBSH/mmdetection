@@ -408,6 +408,56 @@ class WindowSensitivityTest(unittest.TestCase):
             )
         self.assertIn("cells=4 images_per_cell=4 records=16", output)
 
+    def test_fine_launcher_maps_common_13_by_13_grid(self):
+        script = Path(__file__).resolve().parents[1] / "postprocess" / (
+            "run_2p5x_window_sensitivity_fine_array.sh"
+        )
+        environment = os.environ.copy()
+        environment.update({"DRY_RUN": "1", "SLURM_ARRAY_TASK_ID": "12"})
+        output = subprocess.check_output(
+            ["bash", str(script)], env=environment, text=True
+        )
+        self.assertIn("cell_id=12 patch_size=96 overlap_ratio=0.70", output)
+        self.assertIn("cell_id=168 patch_size=448 overlap_ratio=0.70", output)
+        self.assertIn("2p5x_00019.png", output)
+        text = script.read_text(encoding="utf-8")
+        self.assertIn(
+            'data/syn_multimag/coco_rotation/images/test/${IMAGE_NAME}', text
+        )
+        self.assertNotIn("#SBATCH --mem=", text)
+
+    def test_fine_reuse_helper_copies_168_exact_coarse_records(self):
+        coarse_sizes = (96, 128, 160, 192, 256, 320, 400, 512, 640, 768)
+        coarse_overlaps = (0.05, 0.10, 0.15, 0.20, 0.30, 0.45, 0.60)
+        images = tuple(f"2p5x_{number:05d}.png" for number in range(16, 20))
+        script = Path(__file__).resolve().parents[1] / "postprocess" / (
+            "reuse_2p5x_coarse_results.py"
+        )
+        with tempfile.TemporaryDirectory() as temporary_dir:
+            root = Path(temporary_dir)
+            source = root / "coarse"
+            destination = root / "fine"
+            source.mkdir()
+            self._write_multimage_grid(
+                source, coarse_sizes, coarse_overlaps, images
+            )
+            output = subprocess.check_output(
+                [
+                    sys.executable,
+                    str(script),
+                    "--source",
+                    str(source),
+                    "--destination",
+                    str(destination),
+                ],
+                text=True,
+            )
+            copied = list(destination.rglob("*.json"))
+            payloads = [json.loads(path.read_text()) for path in copied]
+        self.assertIn("reused=168", output)
+        self.assertEqual(len(copied), 168)
+        self.assertTrue(all("reused_from" in row for row in payloads))
+
 
 if __name__ == "__main__":
     unittest.main()
